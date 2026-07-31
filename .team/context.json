@@ -1,0 +1,29 @@
+{
+  "project": "OAIW 操作部AI工作台",
+  "version": "1.0.0",
+  "status": "开发中",
+  "tech_stack": {
+    "backend": "Python 3.14 + FastAPI + SQLAlchemy + SQLite",
+    "frontend": "Vue 3 + Vite(5175) + Element Plus + Pinia"
+  },
+  "team": {
+    "pm": "项目经理 - 本窗口（用户直接交互）",
+    "fe": "前端工程师 - 独立CLI窗口",
+    "be": "后端工程师 - 独立CLI窗口",
+    "rpa": "RPA自动化工程师 - 独立CLI窗口",
+    "biz": "业务专家 - 独立CLI窗口",
+    "ai": "AI人工智能工程师 - 独立CLI窗口",
+    "qa": "QA测试工程师 - 独立CLI窗口"
+  },
+  "active_tasks": [
+    {
+      "id": "001",
+      "name": "合并「并行」与「一呼百应」为「多专家会诊」",
+      "assignee": "BE + FE",
+      "status": "已派发",
+      "created": "2026-07-09"
+    }
+  ],
+  "recent_decisions": [],
+  "last_updated": "2026-07-09"
+}

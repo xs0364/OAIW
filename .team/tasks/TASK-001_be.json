@@ -1,0 +1,9 @@
+{
+  "id": "TASK-001",
+  "from": "pm",
+  "to": "be",
+  "title": "加一个查询港口状态的API端点",
+  "description": "GET /api/ports/status 返回当前各港口作业状态",
+  "priority": "normal",
+  "created_at": "2026-07-09 11:07:55"
+}

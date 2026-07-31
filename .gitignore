@@ -1,0 +1,48 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+
+# --- Environment & secrets ---
+.env
+.env.local
+*.auth_state.json
+npedi_auth_state.json
+sk_auth_seabayop.json
+
+# --- Frontend ---
+frontend/node_modules/
+frontend/dist/
+
+# --- Database ---
+oaiw.db
+oaiw_data/
+chroma_data/
+
+# --- Logs ---
+*.log
+backend/logs/*.log
+
+# --- Images (generated) ---
+*.png
+*.jpg
+*.jpeg
+*.bmp
+
+# --- Uploads ---
+uploads/
+
+# --- Browser data ---
+.npedi_browser_data/
+chrome_test_profile/
+sk_session/
+
+# --- OS ---
+Thumbs.db
+.DS_Store
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp

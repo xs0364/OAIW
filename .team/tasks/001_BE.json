@@ -1,0 +1,13 @@
+{
+  "taskId": "001-BE",
+  "title": "合并并行与一呼百应为多专家会诊 - 后端",
+  "assignee": "BE ⚙️",
+  "priority": "high",
+  "files": [
+    "backend/addons/llm/multi_agent.py",
+    "backend/addons/llm/routers/chat.py"
+  ],
+  "description": "新增 chat_expert_panel() 方法和 /api/chat/multi-agent/expert-panel 端点，合并并行和一呼百应功能",
+  "details": "详见 .team/tasks/001_BE.md",
+  "status": "pending"
+}

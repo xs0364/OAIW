@@ -1,0 +1,12 @@
+{
+  "taskId": "001-FE",
+  "title": "合并并行与一呼百应为多专家会诊 - 前端",
+  "assignee": "FE 🎨",
+  "priority": "high",
+  "files": [
+    "frontend/src/views/AgentChat.vue"
+  ],
+  "description": "将下拉选项中'并行'和'一呼百应'合并为'多专家会诊'，支持合成/对比两种显示模式",
+  "details": "详见 .team/tasks/001_FE.md",
+  "status": "pending"
+}
