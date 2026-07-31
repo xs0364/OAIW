@@ -7,9 +7,13 @@ dist/
 # --- Environment & secrets ---
 .env
 .env.local
-*.auth_state.json
-npedi_auth_state.json
 sk_auth_seabayop.json
+
+# --- RPA 港口凭据（cookie/token/手机号，禁止提交） ---
+*_auth_state.json
+*_auth_state.bak
+*_token.txt
+*_mobile.txt
 
 # --- Frontend ---
 frontend/node_modules/
