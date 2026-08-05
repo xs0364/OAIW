@@ -43,6 +43,12 @@ const routes = [
         meta: { title: 'RPA自动化', icon: 'Monitor' },
       },
       {
+        path: 'merge-fill',
+        name: 'MergeFill',
+        component: () => import('../views/MergeFill.vue'),
+        meta: { title: '佰信合并录入', icon: 'EditPen' },
+      },
+      {
         path: 'agent-chat',
         name: 'AgentChat',
         component: () => import('../views/AgentChat.vue'),

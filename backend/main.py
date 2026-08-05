@@ -30,6 +30,7 @@ from backend.core.routers.settings import router as settings_router
 from backend.core.routers.air_freight import router as air_freight_router
 from backend.core.routers.fcl import router as fcl_router
 from backend.core.routers.sea_freight import router as sea_freight_router
+from backend.core.routers.merge import router as merge_router
 from backend.core.models.setting import Setting  # noqa
 from backend.addons.rag.routers import router as knowledge_router
 
@@ -67,6 +68,7 @@ app.include_router(knowledge_router)
 app.include_router(air_freight_router)
 app.include_router(fcl_router)
 app.include_router(sea_freight_router)
+app.include_router(merge_router)
 
 
 @app.get("/api/health")

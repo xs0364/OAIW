@@ -179,6 +179,9 @@
             <el-button type="primary" size="small" :loading="task.status === '运行中'" @click="runTask(task)">
               {{ task.status === '运行中' ? '运行中...' : '运行' }}
             </el-button>
+            <el-button v-if="task.name === '集装箱查询' && task.queryDone" type="success" size="small" @click="goMergeFill(task)">
+              合并录入佰信
+            </el-button>
             <el-button size="small" @click="task.showLogs = !task.showLogs">
               {{ task.showLogs ? '隐藏日志' : '日志' }}
             </el-button>
@@ -224,9 +227,22 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Ship, Ticket, Search, Files, CreditCard, UploadFilled } from '@element-plus/icons-vue'
 import client from '../api/client'
+
+const router = useRouter()
+
+function goMergeFill(task) {
+  router.push({
+    name: 'MergeFill',
+    query: {
+      container_no: task.params.container_no || '',
+      booking_no: task.params.booking_no || '',
+    },
+  })
+}
 
 const fileDragOver = ref(false)
 
@@ -242,7 +258,7 @@ const rpaTasks = ref([
   {
     name: '集装箱查询', icon: Search, color: '#409eff',
     desc: '输入柜号查询盐田/蛇口/上海/宁波/青岛等港口的集装箱在场状态',
-    status: '就绪', showLogs: false, logLines: [],
+    status: '就绪', showLogs: false, logLines: [], queryDone: false,
     params: { port_name: '盐田港', container_no: '', booking_no: '', npedi_mobile: localStorage.getItem('npedi_mobile') || '', vessel_name: '', voyage_no: '' }, files: [],
   },
   {
@@ -464,6 +480,7 @@ async function runTask(task) {
                       })
                     }
                     log(task, result.success ? '[查询成功]' : ('[查询失败] ' + (result.error || '')), result.success ? '#00ff00' : '#ff6b6b')
+                    if (result.success) task.queryDone = true
                   } catch (e) { /* ignore */ }
                   continue
                 }
@@ -548,7 +565,10 @@ async function runTask(task) {
                     if (cleaned) log(task, cleaned)
                   })
                 }
-                if (result.success) log(task, '[查询成功]', '#00ff00')
+                if (result.success) {
+                  task.queryDone = true
+                  log(task, '[查询成功]', '#00ff00')
+                }
                 else log(task, '[查询失败] ' + (result.error || '未知错误'), '#ff6b6b')
               } catch (e) { log(task, data) }
             } else {
@@ -653,8 +673,8 @@ async function runTask(task) {
       const mergeRes = await client.post('/docs/merge-invoices', { doc_ids: docIds })
       if (mergeRes.data.success) { log(task, `[合并完成] 共 ${mergeRes.data.file_count} 个文件`, '#00ff00'); mergeRes.data.merged_text.split('\n').slice(0, 50).forEach(line => log(task, line)) }
     } else if (task.name === '账单录入佰信') {
-      log(task, '[佰信系统录入需要配置登录信息]', '#ffd700')
-      log(task, '请在设置页面配置佰信系统账号和URL后再运行')
+      log(task, '[打开佰信合并录入]', '#ffd700')
+      router.push({ name: 'MergeFill' })
     }
 
     task.status = task.filledLetter ? '完成' : '就绪'

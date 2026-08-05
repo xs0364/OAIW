@@ -1,0 +1,999 @@
+{
+  "meta": {
+    "template": "佰信-订舱编辑弹窗-规范匹配模板",
+    "version": "1.0",
+    "date": "2026-07-31",
+    "popup_rect": [
+      510,
+      216,
+      1313,
+      831
+    ],
+    "grid_rect": [
+      905,
+      594,
+      1277,
+      709
+    ],
+    "note": "pos = 绝对屏幕坐标点击中心，前提弹窗在默认位(ensure_popup_position)。type: text=文本直输 / combo=下拉 / button=按钮选择框(点开另弹选择窗) / date=日期框 / grid=网格 / check=复选。source=集装箱查询规范字段key。已填值字段标 autofill=1 表示弹窗已自动有值、通常不动。"
+  },
+  "sources": {
+    "container_no": "柜号",
+    "booking_no": "订舱单号/SO号",
+    "bl_no": "船司订舱号/提单号",
+    "size_type": "箱型尺寸",
+    "seal": "封条号/铅封",
+    "vessel": "英文船名",
+    "voyage": "航次",
+    "terminal": "码头/当前位置",
+    "pol": "装货港",
+    "dest": "目的港/卸货港",
+    "owner": "箱属公司/箱主/船东",
+    "gross": "毛重(KG)",
+    "pieces": "件数",
+    "volume": "体积",
+    "eta": "ETA",
+    "etd": "ETD",
+    "status": "状态"
+  },
+  "fields": [
+    {
+      "group": "基础信息",
+      "key": "client_ref",
+      "label": "客户委托号",
+      "pos": [
+        642,
+        311
+      ],
+      "type": "text",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "基础信息",
+      "key": "so_no",
+      "label": "S/O NO",
+      "pos": [
+        833,
+        311
+      ],
+      "type": "text",
+      "source": "booking_no",
+      "required": true,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "基础信息",
+      "key": "operator",
+      "label": "操作员",
+      "pos": [
+        992,
+        311
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "单证",
+      "key": "bl_no",
+      "label": "船东提单号",
+      "pos": [
+        641,
+        335
+      ],
+      "type": "text",
+      "source": "bl_no",
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "单证",
+      "key": "hbl_no",
+      "label": "1st H/BL",
+      "pos": [
+        833,
+        335
+      ],
+      "type": "text",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "单证",
+      "key": "scac",
+      "label": "SCAC COD",
+      "pos": [
+        1023,
+        335
+      ],
+      "type": "text",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "单证",
+      "key": "vessel_en",
+      "label": "英文船名",
+      "pos": [
+        641,
+        357
+      ],
+      "type": "button",
+      "source": "vessel",
+      "required": true,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "单证",
+      "key": "vessel_cn",
+      "label": "中文船名",
+      "pos": [
+        833,
+        358
+      ],
+      "type": "text",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "单证",
+      "key": "terminal",
+      "label": "航次",
+      "pos": [
+        999,
+        358
+      ],
+      "type": "text",
+      "source": "terminal",
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "船期",
+      "key": "route",
+      "label": "航线",
+      "pos": [
+        641,
+        378
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "船期",
+      "key": "etd",
+      "label": "ETD",
+      "pos": [
+        833,
+        378
+      ],
+      "type": "date",
+      "source": "etd",
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "船期",
+      "key": "eta",
+      "label": "ETA",
+      "pos": [
+        1023,
+        378
+      ],
+      "type": "date",
+      "source": "eta",
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "船期",
+      "key": "cutoff",
+      "label": "截行条",
+      "pos": [
+        1023,
+        539
+      ],
+      "type": "date",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "收发货方",
+      "key": "consignor",
+      "label": "委托人",
+      "pos": [
+        641,
+        401
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "收发货方",
+      "key": "shipper",
+      "label": "发货人",
+      "pos": [
+        833,
+        401
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "收发货方",
+      "key": "consignee",
+      "label": "收货人",
+      "pos": [
+        1023,
+        401
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed",
+      "note": "确认不填"
+    },
+    {
+      "group": "收发货方",
+      "key": "notify",
+      "label": "通知人",
+      "pos": [
+        1213,
+        401
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "收发货方",
+      "key": "booking_consignor",
+      "label": "排载发货人",
+      "pos": [
+        641,
+        424
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "收发货方",
+      "key": "booking_consignee",
+      "label": "排载收货人",
+      "pos": [
+        833,
+        424
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "收发货方",
+      "key": "ship_agent",
+      "label": "船代",
+      "pos": [
+        1023,
+        424
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "收发货方",
+      "key": "owner",
+      "label": "船东",
+      "pos": [
+        1213,
+        424
+      ],
+      "type": "button",
+      "source": "owner",
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "港口",
+      "key": "pol",
+      "label": "装运港",
+      "pos": [
+        641,
+        447
+      ],
+      "type": "button",
+      "source": "pol",
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "港口",
+      "key": "transit",
+      "label": "中转港",
+      "pos": [
+        833,
+        447
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "港口",
+      "key": "dest_unload",
+      "label": "卸货港",
+      "pos": [
+        1023,
+        447
+      ],
+      "type": "button",
+      "source": "dest",
+      "required": true,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "港口",
+      "key": "dest",
+      "label": "目的港",
+      "pos": [
+        1213,
+        447
+      ],
+      "type": "button",
+      "source": "dest",
+      "required": true,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "港口",
+      "key": "overseas_agent",
+      "label": "国外代理",
+      "pos": [
+        641,
+        470
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "港口",
+      "key": "booking_co",
+      "label": "订舱公司",
+      "pos": [
+        833,
+        470
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "港口",
+      "key": "solicit_type",
+      "label": "揽货类型",
+      "pos": [
+        1023,
+        470
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "港口",
+      "key": "solicit_agent",
+      "label": "揽货代理",
+      "pos": [
+        1212,
+        470
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "货物",
+      "key": "cargo_name",
+      "label": "货物简称",
+      "pos": [
+        641,
+        493
+      ],
+      "type": "text",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "货物",
+      "key": "pieces",
+      "label": "件数",
+      "pos": [
+        799,
+        493
+      ],
+      "type": "text",
+      "source": "pieces",
+      "required": true,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "货物",
+      "key": "package_unit",
+      "label": "包装",
+      "pos": [
+        856,
+        492
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "uncertain"
+    },
+    {
+      "group": "货物",
+      "key": "gross",
+      "label": "毛重",
+      "pos": [
+        1023,
+        493
+      ],
+      "type": "text",
+      "source": "gross",
+      "required": true,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "货物",
+      "key": "volume",
+      "label": "体积",
+      "pos": [
+        1180,
+        493
+      ],
+      "type": "text",
+      "source": "volume",
+      "required": true,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "拖车报关",
+      "key": "truck_mode",
+      "label": "拖车场装",
+      "pos": [
+        641,
+        539
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "拖车报关",
+      "key": "customs_mode",
+      "label": "报关方式",
+      "pos": [
+        832,
+        539
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "拖车报关",
+      "key": "size_type",
+      "label": "箱型箱重",
+      "pos": [
+        1213,
+        539
+      ],
+      "type": "button",
+      "source": "size_type",
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "场站",
+      "key": "yard_co",
+      "label": "场站公司",
+      "pos": [
+        641,
+        561
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "场站",
+      "key": "cancel_no",
+      "label": "核销单号",
+      "pos": [
+        834,
+        561
+      ],
+      "type": "text",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "场站",
+      "key": "quote_no",
+      "label": "报价编号",
+      "pos": [
+        1022,
+        561
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "场站",
+      "key": "contract_no",
+      "label": "合约号",
+      "pos": [
+        1213,
+        561
+      ],
+      "type": "button",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "时间",
+      "key": "ati",
+      "label": "ATD",
+      "pos": [
+        605,
+        582
+      ],
+      "type": "date",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "时间",
+      "key": "btf",
+      "label": "ETP",
+      "pos": [
+        760,
+        582
+      ],
+      "type": "date",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "时间",
+      "key": "atf",
+      "label": "ATP",
+      "pos": [
+        915,
+        582
+      ],
+      "type": "date",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "时间",
+      "key": "ata",
+      "label": "ATA",
+      "pos": [
+        1070,
+        582
+      ],
+      "type": "date",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "时间",
+      "key": "ad",
+      "label": "ADD",
+      "pos": [
+        1221,
+        582
+      ],
+      "type": "date",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "RT计费",
+      "key": "rt_qty",
+      "label": "RT数量",
+      "pos": [
+        590,
+        602
+      ],
+      "type": "text",
+      "source": "volume",
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "RT计费",
+      "key": "unit_price",
+      "label": "单价",
+      "pos": [
+        701,
+        602
+      ],
+      "type": "text",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "付款签发",
+      "key": "charge_kind_mbl",
+      "label": "种类MBL",
+      "pos": [
+        641,
+        697
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "付款签发",
+      "key": "charge_kind_hbl",
+      "label": "种类HBL",
+      "pos": [
+        833,
+        697
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 0,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "付款签发",
+      "key": "pay_method_mbl",
+      "label": "付款方式MBL",
+      "pos": [
+        641,
+        718
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "付款签发",
+      "key": "pay_method_hbl",
+      "label": "付款方式HBL",
+      "pos": [
+        833,
+        718
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "付款签发",
+      "key": "issue_mbl",
+      "label": "签发方式MBL",
+      "pos": [
+        641,
+        739
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "付款签发",
+      "key": "issue_hbl",
+      "label": "签发方式HBL",
+      "pos": [
+        833,
+        739
+      ],
+      "type": "combo",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    },
+    {
+      "group": "备注",
+      "key": "remark",
+      "label": "备注",
+      "pos": [
+        1017,
+        738
+      ],
+      "type": "text",
+      "source": null,
+      "required": false,
+      "autofill": 1,
+      "confidence": "confirmed"
+    }
+  ],
+  "grid": {
+    "type": "grid",
+    "container": [
+      905,
+      594,
+      1277,
+      709
+    ],
+    "add_row": "右键网格空白处 → 菜单'新增一行'",
+    "right_click_menu": [
+      "Special Paste",
+      "粘贴重复检查",
+      "查看活动态",
+      "从剪取页",
+      "保存为新格式",
+      "新增一行",
+      "删除一行"
+    ],
+    "columns": [
+      {
+        "n": 1,
+        "col": "尺寸",
+        "x": 922,
+        "source": "size_type",
+        "fill": true,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 2,
+        "col": "规格",
+        "x": 976,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 3,
+        "col": "集装箱号",
+        "x": 1026,
+        "source": "container_no",
+        "fill": true,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 4,
+        "col": "封铅号",
+        "x": 1104,
+        "source": "seal",
+        "fill": true,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 5,
+        "col": "F/P",
+        "x": 1150,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed",
+        "note": "F/P列用途未明，跳过"
+      },
+      {
+        "n": 6,
+        "col": "拖车公司",
+        "x": 1195,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 7,
+        "col": "件数",
+        "x": null,
+        "source": "pieces",
+        "fill": true,
+        "confidence": "confirmed",
+        "note": "需横向滚动后定位"
+      },
+      {
+        "n": 8,
+        "col": "毛重",
+        "x": null,
+        "source": "gross",
+        "fill": true,
+        "confidence": "confirmed",
+        "note": "需横向滚动后定位"
+      },
+      {
+        "n": 9,
+        "col": "Tareweight2",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 10,
+        "col": "体积",
+        "x": null,
+        "source": "volume",
+        "fill": true,
+        "confidence": "confirmed",
+        "note": "需横向滚动后定位"
+      },
+      {
+        "n": 11,
+        "col": "集装箱订舱号",
+        "x": null,
+        "source": "booking_no",
+        "fill": true,
+        "confidence": "confirmed",
+        "note": "每柜SO号，需横向滚动"
+      },
+      {
+        "n": 12,
+        "col": "需转船",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 13,
+        "col": "温度",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 14,
+        "col": "通风口",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 15,
+        "col": "称重方式",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 16,
+        "col": "VGM重量",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 17,
+        "col": "称重日期",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 18,
+        "col": "VGM申报人",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 19,
+        "col": "称重方",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      },
+      {
+        "n": 20,
+        "col": "包装单位",
+        "x": null,
+        "source": null,
+        "fill": false,
+        "confidence": "confirmed"
+      }
+    ],
+    "note": "列名=用户核对权威版。fill=true共7列：尺寸/集装箱号/封铅号/件数/毛重/体积/集装箱订舱号。首屏可见列(1-6)已用OCR定位x；列7-20需横向滚动后定位。填单元格建议：点单元格→输入→Tab移下一列(cxGrid会自动横向滚动)"
+  }
+}

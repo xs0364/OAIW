@@ -18,6 +18,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from backend.core.models.fcl_order import FCLOrder
+from backend.rpa import unified_mapper as um
 
 logger = logging.getLogger(__name__)
 
@@ -74,47 +75,6 @@ def _extract_colon_any(text: str, key: str) -> str:
     return ""
 
 
-def _extract_qd_kv(text: str, key: str) -> str:
-    """提取青岛港管道分隔格式的 key=value（如 XH=SLEU2516841 | YWCM=PRESIDENT REAGAN）"""
-    pat = re.compile(r'(?:^|\|)\s*' + re.escape(key) + r'=([^|\n]+)')
-    m = pat.search(text)
-    return m.group(1).strip() if m else ""
-
-
-def _qd_field(section: str, key: str, fallback: str = "") -> str:
-    """从青岛港某个 section 提取字段值"""
-    v = _extract_qd_kv(section, key)
-    return v if v else fallback
-
-
-def _yantian_kv(text: str, key: str) -> str:
-    """从盐田港 tab 分隔的多字段行提取 key:value
-
-    盐田输出每行多个 key:value 以 tab 分隔，key 在行中：
-        L6: "尺寸’类型：\t40’HQ(45/G1)\t街车入闸时间：\t2026-07-06 17:22"
-
-    只匹配包含 tab 的多字段行（排除单字段行首匹配）。
-    """
-    for line in text.split("\n"):
-        if "\t" not in line:
-            continue  # 跳过非 tab 行（单字段行首）
-        sep = None
-        for s in ("：", ":"):
-            if key + s in line:
-                sep = s
-                break
-        if sep is None:
-            continue
-        idx = line.find(key + sep)
-        if idx < 0:
-            continue
-        after = line[idx + len(key) + len(sep):].strip()
-        if "\t" in after:
-            after = after.split("\t")[0].strip()
-        return after
-    return ""
-
-
 def sync_from_port(db: Session, raw_text: str, container_no: str, booking_no: str = "",
                    port_name: str = "", vessel_name: str = "", voyage_no: str = "") -> dict:
     """
@@ -127,181 +87,27 @@ def sync_from_port(db: Session, raw_text: str, container_no: str, booking_no: st
     """
     result = {"synced": False, "module": "", "order_no": "", "action": ""}
 
-    # ===== 统一字段提取 =====
+    # ===== 统一字段提取（方案B：走 unified_mapper 统一解析引擎） =====
     ctn = container_no.strip().upper()
     biz_order_no = booking_no.strip()  # 业务单号 → order_no
 
-    # ===== 青岛港专用解析（| 管道分隔的 key=value 格式） =====
-    is_qingdao = "青岛" in port_name
-    is_yantian = "盐田" in port_name
-    qd_section = ""
-    if is_qingdao:
-        m = re.search(r'【出口-码头信息】\([^)]+\)\s*\n(.*?)(?:\n\n|\Z)', raw_text, re.DOTALL)
-        if m:
-            qd_section = m.group(1)
-
-    # 从港口输出中提取真正的订舱单号/提单号
-    booking_no_from_port = (
-        _extract_colon(raw_text, "订舱单号") or  # 蛇口/盐田
-        _extract_colon(raw_text, "提单号") or     # 宁波: 提单号：WHL061G554006
-        _extract_colon(raw_text, "定舱号") or
-        _extract_colon(raw_text, "BookingNo") or
-        (_qd_field(qd_section, "TDH") if is_qingdao else "") or  # 青岛: TDH=QGD3131565
-        _yantian_kv(raw_text, "订舱号") or  # 盐田 tab: 订舱号：\t272977891
-        booking_no.strip() or  # fallback: 前端传入参数本身就是提单号（如宁波港）
-        ""
-    )
-    bl = booking_no_from_port  # 真正的船司订舱号 → bl_no
-
-    # 箱型（从各港口输出中提取）
-    size_type = (  # 按优先级尝试
-        _extract_colon(raw_text, "尺寸/类型") or     # 蛇口
-        _extract_colon(raw_text, "箱型尺寸") or        # NPEDI
-        _extract_colon(raw_text, "箱型") or            # 通用
-        _extract_colon(raw_text, "尺寸") or            # 盐田: "尺寸：20GP"
-        _extract_colon(raw_text, "尺寸’类型") or       # 盐田: "尺寸’类型(Unicode U+2019)：40'HQ(45/G1)"
-        _yantian_kv(raw_text, "尺寸’类型") or          # 盐田 tab 分隔行
-        _extract_colon(raw_text, "SzTpHt") or          # 蛇口英文
-        (f"{_qd_field(qd_section, 'CC')}{_qd_field(qd_section, 'XX')}" if is_qingdao else "") or  # 青岛: CC=20 + XX=GP → 20GP
-        ""
-    )
-
-    # 毛重
-    gross_str = (
-        _extract_colon(raw_text, "毛重(KG)") or
-        _extract_colon(raw_text, "毛重(KGS)") or
-        _extract_colon(raw_text, "箱重") or
-        _extract_colon(raw_text, "GrossWeight") or
-        _extract_colon(raw_text, "称重") or
-        (_qd_field(qd_section, "MZ") if is_qingdao else "") or  # 青岛: MZ=15454
-        ""
-    )
-    try:
-        gross_float = float(re.sub(r'[^\d.]', '', gross_str))
-    except (ValueError, TypeError):
-        gross_float = 0
-
-    # 封条号
-    seal = (
-        _extract_colon(raw_text, "封条号") or
-        _extract_colon(raw_text, "铅封") or
-        _extract_colon(raw_text, "SealNbr1") or
-        _yantian_kv(raw_text, "封条号") or  # 盐田 tab 行
-        (_extract_qd_kv(raw_text, "QFH") or _extract_qd_kv(raw_text, "QFH1") if is_qingdao else "") or  # 青岛: QFH=M/M7645744
-        ""
-    )
-
-    # 船名/航次
-    # 注意：蛇口港 "进港船名航次" 是拖车牌号/行程（粤BQL723/26061303298）
-    #       "离港船名航次" 才是真船名（OOCL ITALY/155S）
-    # 注意：盐田港 "船舶名称" 才是船名，"船舶" 是箱属缩写
-    vessel_field = (
-        _extract_colon(raw_text, "英文船名") or           # NPEDI
-        _extract_colon(raw_text, "船舶名称") or            # 盐田: MAERSK SAIGON
-        _yantian_kv(raw_text, "船舶名称") or               # 盐田 tab 行
-        _extract_colon(raw_text, "船名航次") or           # 通用
-        _extract_colon(raw_text, "离港船名航次") or       # 蛇口: "OOCL ITALY/155S"
-        _extract_colon(raw_text, "船舶") or               # 盐田: "COSCO SHIPPING RHEIN / 224W"
-        _extract_colon(raw_text, "船名") or               # 通用
-        _extract_colon(raw_text, "进港船名航次") or       # 最低（蛇口此为拖车信息）
-        (_qd_field(qd_section, "CKYWCM") or _qd_field(qd_section, "YWCM") if is_qingdao else "") or  # 青岛: CKYWCM=PRESIDENT REAGAN
-        ""
-    )
-    # 单独的航次字段（盐田/青岛等单位字段）
-    voyage_only = (
-        _extract_colon(raw_text, "出口商业航次") or        # 蛇口: 155S
-        _extract_colon(raw_text, "航次") or                # 盐田: GM/MSKSAI/627E
-        _yantian_kv(raw_text, "航次") or                   # 盐田 tab 行
-        ""
-    )
-    # 青岛航次
-    qd_voyage = _qd_field(qd_section, "CKHC") or _qd_field(qd_section, "HCHC") if is_qingdao else ""
-    eng_name = voyage = ""
-    if vessel_field:
-        parts = re.split(r'[/／]', vessel_field)
-        eng_name = parts[0].strip()
-        if len(parts) > 1:
-            voyage = parts[1].strip()
-        elif voyage_only:
-            voyage = voyage_only  # 蛇口"出口商业航次"只有航次号
-        elif qd_voyage:
-            voyage = qd_voyage  # 青岛: CKHC=0DBORE
-
-    # 码头（蛇口"当前位置: VESSEL 0600990"不是在码头，是已在船上）
-    terminal = _extract_colon(raw_text, "当前场地") or ""  # 盐田: YICT
-    if not terminal:
-        t = _extract_colon(raw_text, "当前位置") or ""    # 蛇口
-        if t and not t.upper().startswith("VESSEL"):
-            terminal = t
-    if not terminal:
-        terminal = _extract_colon(raw_text, "码头") or ""  # NPEDI
-    if not terminal and is_qingdao:
-        terminal = _qd_field(qd_section, "MTMC") or ""    # 青岛: MTMC=QQCTU码头
-
-    # ETA/ETD
-    eta = _extract_colon(raw_text, "到港时间") or _extract_colon(raw_text, "进场时间") or ""
-    etd = _extract_colon(raw_text, "离港时间") or _extract_colon(raw_text, "出场时间") or ""
-    if not eta and is_qingdao:
-        eta = _qd_field(qd_section, "SJCGSJ") or ""  # 青岛: 实际进场时间
-        if not eta:
-            for qkey in ("SJRGSJ", "INSERTSJ"):
-                v = _qd_field(qd_section, qkey)
-                if v and "1900" not in v:
-                    eta = v
-                    break
-    if not eta:
-        eta = _yantian_kv(raw_text, "街车入闸时间") or _extract_colon(raw_text, "街车入闸时间") or ""
-        if not eta:
-            eta = _yantian_kv(raw_text, "到达码头时间") or _extract_colon(raw_text, "到达码头时间") or ""
-    if not etd:
-        etd = _yantian_kv(raw_text, "街车出闸时间") or _extract_colon(raw_text, "街车出闸时间") or ""
-    # 青岛 ETD：用入闸时间或入场时间（已装船的柜没有离港时间）
-    if not etd and is_qingdao:
-        for qkey in ("SJRGSJ", "SJRGSJ1", "INSERTSJ", "SJCGSJ"):
-            v = _qd_field(qd_section, qkey)
-            if v and "1900" not in v and v != eta:
-                etd = v
-                break
-
-    # 目的港/卸货港
-    dest_port = (
-        _extract_colon(raw_text, "目的港") or
-        _yantian_kv(raw_text, "卸货港") or               # 盐田 tab: 卸货港：PUSAN/BUSAN...
-        _extract_colon(raw_text, "卸货港") or            # 盐田: 卸货港
-        _extract_colon(raw_text, "装/卸货港口") or
-        _extract_colon(raw_text, "当前动态") or          # 盐田: "返空"
-        (_qd_field(qd_section, "MDGM") if is_qingdao else "") or  # 青岛: MDGM=USOAK
-        ""
-    )
-    pol_port = _extract_colon(raw_text, "装货港") or ""
-    if not pol_port and is_qingdao:
-        pol_port = _qd_field(qd_section, "ZHGYM") or _qd_field(qd_section, "ZHGM") or ""  # 青岛: ZHGYM=QINGDAO
-
-    # 箱属
-    owner = (_extract_colon(raw_text, "箱属公司") or       # 盐田
-             _extract_colon(raw_text, "箱属") or           # 蛇口
-             _extract_colon(raw_text, "箱主") or           # NPEDI
-             (_qd_field(qd_section, "XSGSM") if is_qingdao else "") or  # 青岛: XSGSM=CMA
-             "")
-
-    # 件数/体积（尝试从提单明细行提取）
-    pieces = 0
-    volume_str = ""
-    bl_lines = re.findall(r'([A-Z0-9]{6,})\s+\d+\s+[\d.]+\s+[\d.]+', raw_text)
-    if not bl_lines:
-        bl_lines = re.findall(r'(\d+)[^\d]*件', raw_text)
-    if bl_lines:
-        try:
-            pieces = int(bl_lines[-1]) if isinstance(bl_lines[-1], str) and bl_lines[-1].isdigit() else 0
-        except (ValueError, IndexError):
-            pieces = 0
-    vol_match = re.search(r'体积[：:]\s*([\d.]+)', raw_text)
-    if vol_match:
-        volume_str = vol_match.group(1)
-    try:
-        volume_float = float(volume_str) if volume_str else 0
-    except ValueError:
-        volume_float = 0
+    canon = um.map_port_to_fields(port_name, raw_text, container_no=container_no, booking_no=booking_no)
+    # 船司订舱号/提单号 → bl_no（盐田提单号/蛇口订舱单号/青岛TDH/宁波[BL]段）
+    bl = canon["bl_no"] or canon["booking_no"] or booking_no.strip()  # 兜底: 宁波 blno 即提单号
+    size_type = canon["size_type"]
+    seal = canon["seal"]
+    gross_float = canon["gross"]
+    eng_name = canon["vessel"]
+    voyage = canon["voyage"]
+    vessel_field = f"{eng_name} / {voyage}" if voyage else eng_name  # 显示格式 "船名 / 航次"
+    terminal = canon["terminal"]
+    eta = canon["eta"]
+    etd = canon["etd"]
+    dest_port = canon["dest"]
+    pol_port = canon["pol"]
+    owner = canon["owner"]
+    pieces = canon["pieces"]
+    volume_float = canon["volume"]
 
     # ===== 判断业务类型 =====
     # 只要有RPA传过来的柜号，就视为有集装箱 → FCL 整柜
@@ -309,14 +115,11 @@ def sync_from_port(db: Session, raw_text: str, container_no: str, booking_no: st
     has_seal = bool(seal)
 
     # ===== 港口状态 → FCL 推进状态映射 =====
-    # 收集所有港口状态字段，按最晚的工作流阶段推进
+    # 统一 status（青岛已装船/盐田在场/蛇口柜状态/宁波Full）+ 蛇口"当前位置"(VESSEL=在船)
+    # 收集所有状态信号，按最晚的工作流阶段推进
     port_status_texts = [
-        _qd_field(qd_section, "DQZTMC") if is_qingdao else "",  # 青岛: 已装船
-        _extract_colon(raw_text, "集装箱状态") or _yantian_kv(raw_text, "集装箱状态") or "",  # 盐田 tab 行中
+        canon["status"],
         _extract_colon(raw_text, "当前位置") or "",              # 蛇口: VESSEL 0600990
-        _extract_colon(raw_text, "当前动态") or "",              # 盐田: 返空
-        _extract_colon(raw_text, "放行状态") or "",              # 蛇口: 已放行
-        _extract_colon(raw_text, "柜状态") or "",                # 蛇口: 重柜
     ]
 
     def _port_status_to_step(port_st: str) -> int:

@@ -34,6 +34,10 @@
           <el-icon><Monitor /></el-icon>
           <span>RPA自动化</span>
         </el-menu-item>
+        <el-menu-item index="/merge-fill">
+          <el-icon><EditPen /></el-icon>
+          <span>佰信合并录入</span>
+        </el-menu-item>
         <el-menu-item index="/agent-chat">
           <el-icon><ChatDotSquare /></el-icon>
           <span>AI助手</span>
@@ -146,7 +150,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
 import { ElMessage } from 'element-plus'
 import {
-  Odometer, TakeawayBox, Ship, Box, Monitor,
+  Odometer, TakeawayBox, Ship, Box, Monitor, EditPen,
   ChatDotSquare, Reading, FolderOpened, Setting, Fold, Expand,
   UserFilled, ArrowDown, SwitchButton, Key, Message,
 } from '@element-plus/icons-vue'
