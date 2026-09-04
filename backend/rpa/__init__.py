@@ -114,7 +114,7 @@ def _run_browser_sync(task_type: str, params: dict) -> dict:
                 "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 "ignore_https_errors": True,
             }
-            if task_type == "port_query":
+            if task_type in ("port_query", "vessel_schedule"):
                 port = params.get("port_name", "")
                 if "蛇口" in port or "青岛" in port or "宁波" in port:
                     _load_port_auth_state(context_kwargs, port)
@@ -131,6 +131,8 @@ def _run_browser_sync(task_type: str, params: dict) -> dict:
                 _rpa_sync_orders(port, params, result)
             elif task_type == "port_status":
                 result = _query_port_status_sync(page, params)
+            elif task_type == "vessel_schedule":
+                result = _query_vessel_schedule_sync(page, params)
             elif task_type == "track_cargo":
                 result = _track_cargo_sync(page, params)
             else:
@@ -165,6 +167,34 @@ def _query_port_container_sync(page, params: dict) -> dict:
         }
 
     return driver.query_container(page, params)
+
+
+def _query_vessel_schedule_sync(page, params: dict) -> dict:
+    """船期查询 — 使用对应港口驱动模块查靠泊计划（当前: 盐田）。"""
+    port = params.get("port_name", "")
+
+    if not port:
+        return {"success": False, "data": "", "error": "未指定港口名称"}
+
+    # 懒导入港口驱动
+    from backend.rpa.ports import get_driver as _get_port_driver
+    import backend.rpa.ports as _ports
+
+    driver = _get_port_driver(port)
+    if driver is None:
+        return {
+            "success": False,
+            "data": "",
+            "error": f"港口 '{port}' 尚未支持。已注册港口: {', '.join(_ports.list_ports()) or '无'}",
+        }
+    if not hasattr(driver, "query_vessel_schedule"):
+        return {
+            "success": False,
+            "data": "",
+            "error": f"港口 '{port}' 暂未提供船期查询能力",
+        }
+
+    return driver.query_vessel_schedule(page, params)
 
 
 def _rpa_sync_orders(port: str, params: dict, result: dict):

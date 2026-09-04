@@ -54,6 +54,10 @@ SHEKOU_USERNAME = "Seabayop"
 SHEKOU_PASSWORD = "Seabayop3101"
 AUTH_STATE_PATH = Path(__file__).parent / "sk_auth_state.json"
 
+# 船期查询（VesselSchedule 子应用）相关常量
+VS_TARGET = "https://wk-eport.cmp1872.com/#/main/iframe"
+VS_MENU = "公共船期查询"
+
 
 # =============================================================================
 # 驱动主类
@@ -88,6 +92,59 @@ class ShekouPort:
 
             # ===== Step 4: 解析结果 =====
             return _parse_result(api_data, container_no, booking_no)
+
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "data": "",
+                "error": f"EXCEPTION: {type(e).__name__}: {e}\n{traceback.format_exc()}",
+            }
+
+    @staticmethod
+    def query_vessel_schedule(page, params: dict) -> dict:
+        """蛇口港(SCCT/招商ePort)船期查询 — 按船名查靠泊计划。
+
+        登录后经工作台「数据服务(SCCT) → 公共船期查询」进入 VesselSchedule 子应用：
+        填船名 → 点联想行选船 → 两个日期范围设近一年 → 提交 → 拦截 API JSON。
+
+        参数: vessel_name(船名,必填,≥3字符) / voyage_no(商业航次,可选)。
+        返回成功(含0记录提示)或带 error 的失败 dict。
+        """
+        vessel = (params.get("vessel_name") or params.get("ship_name") or "").strip().upper()
+        voyage = (params.get("voyage_no") or params.get("voyage_code") or "").strip().upper()
+
+        if not vessel:
+            return {"success": False, "data": "", "error": "请输入船名"}
+        if len(vessel) < 3:
+            return {"success": False, "data": "", "error": "船名需至少 3 个字符（英文船名）"}
+
+        try:
+            if not _navigate_to_container(page):
+                return {
+                    "success": False,
+                    "data": "",
+                    "error": "蛇口港登录失败（验证码无法通过或账号密码错误）",
+                }
+
+            # 查询空窗容错: 联想/结果间歇空窗（实证盐田同款模式），最多 3 次，
+            # 每次从工作台重新进入（刷新 SPA）；确定性失败直接报错不重试。
+            result = None
+            last_exc = ""
+            for attempt in range(1, 4):
+                try:
+                    result = _query_vessel_schedule_once(page, vessel, voyage)
+                except RuntimeError as e:
+                    # 入口/表单/船名库等确定性失败 — 重试无意义，干净报错
+                    return {"success": False, "data": "", "error": str(e)}
+                except Exception as e:
+                    last_exc = f"{type(e).__name__}: {e}"
+                    continue
+                if result.get("_records") or attempt >= 3:
+                    return result
+                print(f"  🔁 第 {attempt} 次 0 记录，冷却后重查...", flush=True)
+                page.wait_for_timeout(4000)
+            return {"success": False, "data": "", "error": last_exc or "船期查询多次尝试失败"}
 
         except Exception as e:
             import traceback
@@ -1122,7 +1179,9 @@ def _solve_captcha_opencv(page, captcha=None) -> bool:
 
 
 # NVIDIA NIM 配置
-_NVIDIA_KEY_KEYS = ["agent_key_nim_gpt", "agent_key_nim_qwen", "agent_key_nim_minimax", "agent_key_nim_deepseek"]
+# agent_key_nim_minimax 已迁移为 agent_key_deepseek_chat，存的是 DeepSeek sk- key，
+# 不属于 NIM 视觉验证码候选，故从列表移除（避免把 DeepSeek key 误当 NIM key 用）
+_NVIDIA_KEY_KEYS = ["agent_key_nim_gpt", "agent_key_nim_qwen", "agent_key_nim_deepseek"]
 _NVIDIA_API_BASE = "https://integrate.api.nvidia.com/v1"
 _NVIDIA_VISION_MODEL = "meta/llama-3.2-90b-vision-instruct"
 
@@ -1697,7 +1756,7 @@ def _parse_result(api_data: dict, container_no: str, booking_no: str = "") -> di
         raw = json.dumps(api_data, ensure_ascii=False, indent=2)[:500]
         lines.append(f"\n原始API: {raw}")
 
-        return {"success": True, "data": "\n".join(lines), "error": ""}
+        return {"success": False, "data": "\n".join(lines), "error": "未查到该箱信息，可能当前不在蛇口港，未同步订单"}
 
     c = inner[0]
     lines = [
@@ -1765,3 +1824,297 @@ def _parse_result(api_data: dict, container_no: str, booking_no: str = "") -> di
     lines.append(f"数据来源: 蛇口港 SCCT (wk-eport.cmp1872.com)")
 
     return {"success": True, "data": "\n".join(lines), "error": ""}
+
+
+# =============================================================================
+# 船期查询 (VesselSchedule) — 工作台菜单导航 + 表单驱动 + API 拦截
+# =============================================================================
+
+def _query_vessel_schedule_once(page, vessel: str, voyage: str) -> dict:
+    """完成一次船期查询（从工作台重新进入），返回解析后的 result dict。
+
+    若为确定性失败（菜单找不到/子应用未加载/船名库无此船等）抛 RuntimeError。
+    """
+    page.goto(VS_TARGET, wait_until="domcontentloaded", timeout=40000)
+    page.wait_for_timeout(6000)
+
+    if not _reveal_menu_and_click(page, VS_MENU):
+        raise RuntimeError("工作台菜单中找不到「公共船期查询」入口")
+
+    frame = _find_vs_frame(page)
+    if frame is None:
+        raise RuntimeError("船期查询子应用 (VesselSchedule) 未加载")
+    # 子应用加载瞬间会 monkey-patch 主框架 DOM 接口抛错，约 12s 后消退；等待后再操作
+    print("  ⏳ 等待船期查询页面就绪...", flush=True)
+    page.wait_for_timeout(12000)
+
+    if not _vs_fill_ship(frame, vessel):
+        raise RuntimeError("船期查询表单不可用")
+    print(f"  ✏️ 填写船名: {vessel}", flush=True)
+    if not _vs_pick_suggestion(page, frame, vessel):
+        raise RuntimeError(f"蛇口港船名库未找到「{vessel}」，请核对英文船名拼写")
+    print("  ✅ 已选联想船名", flush=True)
+
+    # 两个日期范围均设为「近一年」→ 覆盖过去一年到未来一年，实测能命中未来船期
+    for idx in (0, 1):
+        r = _vs_set_picker(page, frame, idx, "近一年")
+        if r != "PICKED":
+            raise RuntimeError(f"日期范围快捷选择失败: {r}")
+    print("  📅 日期范围已设为近一年", flush=True)
+
+    data = _vs_submit_and_capture(page, frame)
+    total = (data or {}).get("TotalCount", 0)
+    print(f"  🔍 查询完成 Total={total}", flush=True)
+    return _vs_build_result(vessel, voyage, data)
+
+
+def _reveal_menu_and_click(page, name: str) -> bool:
+    """逐层展开左侧菜单直至叶子项可见并点击。返回是否成功点中。"""
+    for _ in range(30):
+        res = page.evaluate("""(name) => {
+            const li = [...document.querySelectorAll('li.ivu-menu-item')]
+                .filter(x => (x.innerText || '').trim() === name)[0];
+            if (!li) return 'NOT_FOUND';
+            let n = li, visible = true;
+            while (n && n !== document.body) {
+                if (getComputedStyle(n).display === 'none') { visible = false; break; }
+                n = n.parentElement;
+            }
+            if (visible) return 'VISIBLE';
+            let node = li.parentElement;
+            const stack = [];
+            while (node && !node.classList.contains('ivu-menu-vertical') && node !== document.body) {
+                const t = node.querySelector(':scope > .ivu-menu-submenu-title');
+                if (t) stack.push({t: t, hidden: node.offsetParent === null});
+                node = node.parentElement;
+            }
+            for (let i = stack.length - 1; i >= 0; i--) {
+                if (stack[i].hidden) { stack[i].t.click(); return 'CLICKED'; }
+            }
+            return 'NO_HIDDEN';
+        }""", name)
+        if res == "VISIBLE":
+            page.evaluate("""(name) => {
+                const li = [...document.querySelectorAll('li.ivu-menu-item')]
+                    .filter(x => (x.innerText || '').trim() === name)[0];
+                if (li) li.click();
+            }""", name)
+            return True
+        if res == "NOT_FOUND":
+            return False
+        page.wait_for_timeout(500)
+    return False
+
+
+def _find_vs_frame(page):
+    """轮询直到出现 URL 含 VesselSchedule 的 iframe。"""
+    for _ in range(60):
+        frame = next((f for f in page.frames if "VesselSchedule" in f.url), None)
+        if frame:
+            return frame
+        page.wait_for_timeout(500)
+    return None
+
+
+def _vs_safe_eval(frame, expr, arg=None, tries=6):
+    """子应用页面 evaluate，DOM 接口被 patch 抛错时短暂重试；仍失败抛 RuntimeError。"""
+    last = None
+    for _ in range(tries):
+        try:
+            return frame.evaluate(expr, arg)
+        except Exception as e:
+            last = e
+            frame.wait_for_timeout(1500)
+    raise RuntimeError(f"船期查询页面脚本执行失败: {type(last).__name__} {str(last)[:120]}")
+
+
+def _vs_fill_ship(frame, ship: str) -> bool:
+    """向船名输入框（可编辑 ivu-input）填值并触发联想。"""
+    return _vs_safe_eval(frame, """(ship) => {
+        const inps = [...document.querySelectorAll('input')]
+            .filter(el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; });
+        const el = inps.find(x => x.classList.contains('ivu-input') && !x.readOnly);
+        if (!el) return false;
+        el.value = ship;
+        el.dispatchEvent(new Event('focus', {bubbles: true}));
+        el.dispatchEvent(new Event('input', {bubbles: true}));
+        el.dispatchEvent(new Event('change', {bubbles: true}));
+        return true;
+    }""", ship)
+
+
+def _vs_suggest_cell(frame, ship: str):
+    """联想面板中找与船名完全同名的行，返回中心坐标 dict；找不到返回 None。"""
+    return _vs_safe_eval(frame, """(ship) => {
+        for (const el of document.querySelectorAll('.vxe-cell')) {
+            const t = ((el.innerText || '').trim()).toUpperCase();
+            const r = el.getBoundingClientRect();
+            if (t === ship && r.width > 0) {
+                return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+            }
+        }
+        return null;
+    }""", ship)
+
+
+def _vs_pick_suggestion(page, frame, vessel: str) -> bool:
+    """轮询联想行出现后用真实鼠标点击选中该船。"""
+    cell = None
+    for _ in range(8):
+        cell = _vs_suggest_cell(frame, vessel)
+        if isinstance(cell, dict) and cell.get("x"):
+            break
+        page.wait_for_timeout(1000)
+    if not (isinstance(cell, dict) and cell.get("x")):
+        return False
+    page.mouse.click(cell["x"], cell["y"])
+    page.wait_for_timeout(1500)
+    return True
+
+
+def _vs_set_picker(page, frame, idx: int, shortcut: str) -> str:
+    """用真实鼠标打开第 idx 个只读日期 range 并点快捷项 shortcut。"""
+    rects = _vs_safe_eval(frame, """() => {
+        const inps = [...document.querySelectorAll('input')]
+            .filter(el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0; });
+        return inps.filter(el => el.readOnly && el.classList.contains('ivu-input'))
+            .map(el => { const b = el.getBoundingClientRect(); return {x: b.x + b.width / 2, y: b.y + b.height / 2}; });
+    }""")
+    if not isinstance(rects, list) or len(rects) <= idx:
+        return "NO_RECT"
+    page.mouse.click(700, 900)  # 点空白关闭可能残留的已开面板
+    page.wait_for_timeout(500)
+    page.mouse.click(rects[idx]["x"], rects[idx]["y"])
+    page.wait_for_timeout(1300)
+    r = _vs_safe_eval(frame, """(txt) => {
+        const el = [...document.querySelectorAll('.ivu-picker-panel-shortcut')]
+            .find(e => (e.innerText || '').trim() === txt && e.getBoundingClientRect().width > 0);
+        if (el) { el.click(); return 'PICKED'; }
+        return 'NOT_FOUND';
+    }""", shortcut)
+    page.wait_for_timeout(700)
+    page.mouse.click(700, 900)
+    page.wait_for_timeout(500)
+    return r
+
+
+def _vs_submit_and_capture(page, frame) -> dict:
+    """提交船期查询表单，等待并拦截 VesselSchedule 响应 JSON。"""
+    resp = {}
+
+    def _on_resp(r):
+        if "VesselSchedule" in r.url and "/api/" in r.url:
+            try:
+                resp["body"] = r.text()
+            except Exception:
+                pass
+
+    page.on("response", _on_resp)
+    _vs_safe_eval(frame, """() => {
+        const forms = document.querySelectorAll('form');
+        for (const f of forms) {
+            if ((f.innerText || '').includes('船名')) {
+                f.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+                return true;
+            }
+        }
+        return false;
+    }""")
+    for _ in range(12):
+        if resp.get("body"):
+            break
+        page.wait_for_timeout(1000)
+    if not resp.get("body"):
+        raise RuntimeError("未收到船期查询响应")
+    try:
+        return json.loads(resp["body"])
+    except Exception as e:
+        raise RuntimeError(f"船期响应解析失败: {e}")
+
+
+# VesselSchedule 记录字段 → 展示标签（中文优先，时间缩写保留原文方便对齐习惯）
+_VS_FIELDS = [
+    ("TerminalCode", "码头"),
+    ("TheFullName", "船名"),
+    ("LINEID", "船公司"),
+    ("ServiceId", "航线"),
+    ("invoynbr", "进口航次"),
+    ("outvoynbr", "出口航次"),
+    ("ETADate", "预计到港(ETA)"),
+    ("POB", "POB"),
+    ("ETB", "预计靠泊(ETB)"),
+    ("ETD", "预计离港(ETD)"),
+    ("ATA", "实际到港(ATA)"),
+    ("ATD", "实际离港(ATD)"),
+    ("Inagent", "进港船代"),
+    ("Outagent", "离港船代"),
+    ("IMO", "IMO"),
+    ("Notes", "备注"),
+]
+
+
+def _vs_build_result(vessel: str, voyage: str, data: dict) -> dict:
+    """把 VesselSchedule API JSON 解析为 box 文本结果。
+
+    返回含 _records 供上层判定 0 记录空窗重试。
+    """
+    total = (data or {}).get("TotalCount", 0)
+    records = (data or {}).get("InnerList") or []
+
+    cond = f"船名 {vessel}"
+    if voyage:
+        cond += f" · 航次 {voyage}"
+    head = [f"蛇口港(SCCT) — 船期查询 · {cond}", f"{'─' * 44}"]
+
+    if not records:
+        head.append(f"查询成功，但未查到该船在蛇口港的船期（总记录数: {total}）。")
+        head.append("提示: ① 确认英文船名拼写准确；② 船期通常提前数日公布，可稍后重查。")
+        return {"success": True, "data": "\n".join(head) + "\n", "error": "", "_records": 0}
+
+    if voyage:
+        kept = [r for r in records
+                if (r.get("outvoynbr") or "").upper() == voyage
+                or (r.get("invoynbr") or "").upper().endswith(voyage)]
+        if kept:
+            records = kept
+
+    head.append(f"查到 {len(records)} 条船期：")
+    for i, rec in enumerate(records):
+        pairs = []
+        for key, label in _VS_FIELDS:
+            v = rec.get(key)
+            pairs.append((label, "--" if v in (None, "") else str(v)))
+        head.append(_vs_draw_box(pairs))
+        if i < len(records) - 1:
+            head.append("")
+    head.append(f"{'─' * 44}")
+    head.append("数据来源: 蛇口港 SCCT 公共船期查询 (wk-eport.cmp1872.com)")
+
+    return {"success": True, "data": "\n".join(head) + "\n", "error": "", "_records": total}
+
+
+def _vs_disp_w(s: str) -> int:
+    """字符串显示宽度：CJK/全角按 2，其余按 1（用于对齐 box 表）。"""
+    import unicodedata
+    return sum(2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1 for ch in s)
+
+
+def _vs_cjk_pad(s: str, w: int) -> str:
+    """按显示宽度右侧补齐到 w。"""
+    return s + " " * max(0, w - _vs_disp_w(s))
+
+
+def _vs_draw_box(pairs: list) -> str:
+    """「字段名 | 值」box 对照表，每行一个字段 + 网页查到的对应值。"""
+    if not pairs:
+        return ""
+    wf = max(_vs_disp_w(k) for k, _ in pairs)
+    wv = max(_vs_disp_w(v) for _, v in pairs)
+    seg = "─"
+    top = "┌" + seg * (wf + 2) + "┬" + seg * (wv + 2) + "┐"
+    bot = "└" + seg * (wf + 2) + "┴" + seg * (wv + 2) + "┘"
+    out = [top]
+    for k, v in pairs:
+        out.append(f"│ {_vs_cjk_pad(k, wf)} │ {_vs_cjk_pad(v, wv)} │")
+    out.append(bot)
+    return "\n".join(out)

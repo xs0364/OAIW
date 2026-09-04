@@ -198,13 +198,13 @@ def _parse_result(raw_data: str, container_no: str, booking_no: str) -> dict:
     results = data.get("result", [])
     if not results:
         return {
-            "success": True,
+            "success": False,
             "data": (
                 f"Ningbo Port - {container_no}\n"
                 f"{'-' * 50}\n"
                 f"No data found"
             ),
-            "error": "",
+            "error": "宁波港未查询到该箱数据，未同步订单",
         }
 
     lines = []
@@ -618,7 +618,22 @@ def _browser_query(page, container_no: str, booking_no: str = "",
     # Step A: Container tracking via direct URL
     _log("[NPEDI] 导航到容器物流跟踪...")
     page.goto("https://www.npedi.com/onesite/container/track", wait_until="domcontentloaded", timeout=30000)
-    page.wait_for_timeout(8000)
+    # 登录态失效检测: 过期的 Web-Token 会话在 SPA 校验后（实测约 8~10s）会被客户端重定向到公开首页 /index
+    # 或登录页，而非留在 track 页。首页文本含"集装箱信息/海关放行"（子串"箱信息"/"放行"），
+    # 会骗过下方"查无此箱"判定返回 success=True → 短路跳过短信重新登录并同步空壳订单。
+    # 故轮询 URL：被踢走立即判定失效；稳定留在 track 页则登录态有效。
+    for _ in range(8):                      # 8 × 2s = 最多 ~16s 等待 SPA 会话校验完成
+        page.wait_for_timeout(2000)
+        _u = page.url
+        if "login" in _u.lower():
+            _log(f"[NPEDI] 登录态已失效（跳转登录页 {_u}），触发短信重新登录")
+            return {"success": False, "data": "", "error": "__LOGIN_EXPIRED__ 宁波港登录态已过期，需短信重新登录"}
+        if "track" not in _u.lower():
+            _log(f"[NPEDI] 登录态已失效（跳转 {_u}），触发短信重新登录")
+            return {"success": False, "data": "", "error": "__LOGIN_EXPIRED__ 宁波港登录态已过期，需短信重新登录"}
+        if _ >= 3:                          # 连续 ≥8s 稳定在 track 页 → 登录态有效
+            break
+    _log("[NPEDI] 已确认停留在物流跟踪页（登录态有效），继续查询...")
 
     # Fill container number (2nd visible visible input = 集装箱号)
     _log(f"[NPEDI] 填入柜号: {container_no}")
@@ -718,8 +733,8 @@ def _browser_query(page, container_no: str, booking_no: str = "",
 
         current_url = page.url
         _log(f"[NPEDI] 进箱公告页面URL: {current_url}")
-        if "login" in current_url.lower():
-            _log("[NPEDI] 被重定向到登录页，跳过进箱公告")
+        if "dailyzyjh" not in current_url.lower():
+            _log("[NPEDI] 未停留在进箱公告页（登录态失效），跳过进箱公告")
         else:
             try:
                 page.wait_for_selector('input', timeout=10000)
@@ -827,6 +842,170 @@ def _browser_query(page, container_no: str, booking_no: str = "",
     lines.append(f"{'─' * 50}")
     lines.append("数据来源: 宁波港口EDI中心 (npedi.com)")
 
+    # 查无此箱：无时间线表格且未出现箱信息段 → 不建单
+    if not track_tables.strip() and "箱信息" not in track_content and "箱号" not in track_content:
+        return {
+            "success": False,
+            "data": "\n".join(lines),
+            "error": "宁波港未查询到该箱数据，未同步订单",
+        }
+
+    return {"success": True, "data": "\n".join(lines), "error": ""}
+
+
+def _browser_vessel_query(page, vessel_name: str, voyage_no: str = "") -> dict:
+    """宁波进箱公告独立查询（船期卡-宁波）：登录后直达 dailyZyjh，按船名/航次筛。
+
+    由 _browser_query 的 Step B（进箱公告段）抽取而来，结果独立成文，不依赖柜号。
+    """
+    vessel_main = ""
+    no_record = False
+    try:
+        _log("[NPEDI] 导航到进箱公告...")
+        page.goto("https://www.npedi.com/onesite/vessel/dailyZyjh", wait_until="domcontentloaded", timeout=20000)
+        page.wait_for_timeout(5000)
+
+        current_url = page.url
+        _log(f"[NPEDI] 进箱公告页面URL: {current_url}")
+        # 登录态判据：必须停留在 dailyZyjh 页。过期会话会被 SPA 踢到公开首页 /index（而非仅 /login），
+        # 故按"目标页在否"判断，与主查询 track 页轮询同思路——否则会拿首页文本冒充进箱公告（假阳性）。
+        if "dailyzyjh" not in current_url.lower():
+            _log("[NPEDI] 未停留在进箱公告页（登录态失效），需短信重新登录")
+            return {"success": False, "data": "", "error": "__LOGIN_EXPIRED__ 宁波港登录态已过期，需短信重新登录"}
+
+        try:
+            page.wait_for_selector('input', timeout=10000)
+            _log("[NPEDI] 进箱公告页面已渲染")
+        except Exception:
+            _log("[NPEDI] 进箱公告页面未检测到输入框")
+            page.wait_for_timeout(3000)
+
+        # 实测该页输入框无 placeholder，查询表单 el-form-item 用 label[for] 关联：
+        # 码头=matou(下拉,默认'全部') 船名=vesselename 航次=voyage 船公司=vesselowner 时间=startTime。
+        # 按 label[for] 定位对应 form-item 内 input，精确不依赖顺序。
+        _log(f"[NPEDI] 填入船名: {vessel_name}" + (f" 航次: {voyage_no}" if voyage_no else ""))
+        page.evaluate("""(args) => {
+            const [name, voyage] = args;
+            const setV = (el, v) => {
+                const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                s.call(el, v);
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+            };
+            const inputFor = (forId) => {
+                const lab = document.querySelector(`label[for="${forId}"]`);
+                const item = lab && lab.closest('.el-form-item');
+                return item ? item.querySelector('input') : null;
+            };
+            const hit = [];
+            if (name) { const el = inputFor('vesselename'); if (el) { setV(el, name); hit.push('vessel'); } }
+            if (voyage) { const el = inputFor('voyage'); if (el) { setV(el, voyage); hit.push('voyage'); } }
+            return hit.join(',');
+        }""", [vessel_name, voyage_no])
+
+        _log("[NPEDI] 点击进箱公告查询...")
+        try:
+            page.locator('button:has-text("查询")').click(timeout=5000)
+        except Exception:
+            page.evaluate("""()=>{
+                const b = document.querySelectorAll('button.el-button--primary.el-button--mini');
+                for (const el of b) {
+                    if ((el.innerText||'').trim()==='查询' && el.offsetParent !== null) {
+                        el.click(); return;
+                    }
+                }
+            }""")
+        # 等待过滤结果表渲染(最多 ~18s)。该页是 Element UI el-table：表头(header-wrapper)与数据行
+        # (body-wrapper)分属两个 <table>。若按键"含'进箱'的 <table>"找，只会命中只有 1 行表头的
+        # header-wrapper → 永远"表格 1 行"。须按外层 div.el-table 匹配"含'进箱'表头"的结果容器，
+        # 再从 .el-table__body-wrapper 取真实数据行(与 _browser_query Step B 遍历全表保留≥2行 同效)。
+        tbl = {"head": [], "rows": [], "empty": False}
+        for _ in range(9):
+            page.wait_for_timeout(2000)
+            tbl = page.evaluate("""() => {
+                const wraps = Array.from(document.querySelectorAll('div.el-table'));
+                let best = null;
+                for (const w of wraps) {
+                    const ths = Array.from(w.querySelectorAll('th')).map(x => (x.innerText || '').trim());
+                    if (ths.some(h => h.includes('进箱'))) { best = w; break; }
+                }
+                const out = {head: [], rows: [], empty: false};
+                if (!best) return out;
+                out.head = Array.from(best.querySelectorAll('.el-table__header-wrapper th'))
+                    .map(x => (x.innerText || '').trim()).filter(Boolean);
+                for (const tr of best.querySelectorAll('.el-table__body-wrapper tbody tr')) {
+                    const cells = Array.from(tr.querySelectorAll('td')).map(x => (x.innerText || '').trim());
+                    if (cells.some(c => c)) out.rows.push(cells);
+                }
+                // 空结果时 Element UI 不渲染数据行，而是 .el-table__empty-text"暂无数据"
+                const et = best.querySelector('.el-table__empty-text');
+                out.empty = !!et && /暂无|没有/.test((et.textContent || ''));
+                return out;
+            }""")
+            if tbl["rows"] or tbl["empty"]:
+                break
+        tbl_head = [h for h in tbl["head"] if h.strip()]
+        tbl_rows = [[c for c in row] for row in tbl["rows"]]
+        _log(f"[NPEDI] 进箱公告: 数据行 {len(tbl_rows)}" + ("（暂无记录）" if tbl["empty"] else ""))
+        if tbl["empty"] and not tbl_rows:
+            # el-table 明确"暂无数据" → 真无记录, 输出友好文案而非页面正文
+            no_record = True
+
+        # body 文本兜底(页面无结构化表格数据行时取正文，含"暂无"等提示)
+        vessel_main = page.evaluate("""() => {
+            const text = document.body.innerText;
+            const lines = text.split('\\n');
+            let start = -1;
+            for (let i = 0; i < lines.length; i++) {
+                const t = (lines[i] || '').trim();
+                if (t.startsWith('首页') || t.includes('首页/')) { start = i; break; }
+            }
+            if (start <= 0) return text;
+            return lines.slice(start).join('\\n');
+        }""")
+    except Exception as e:
+        _log(f"[NPEDI] 进箱公告查询异常: {e}")
+        return {"success": False, "data": "", "error": f"宁波港进箱公告查询失败: {e}"}
+
+    title = f"宁波港(进箱公告) — 船名 {vessel_name}" + (f" · 航次 {voyage_no}" if voyage_no else "")
+    lines = [title, "─" * 46, ""]
+
+    # 竖排键值组装: el-table 列头(tbl_head) + 行单元格(tbl_rows) 逐条成块。
+    # 精简列名 / 去掉序号列(聊天框阅读); 字段名按显示宽度(全角=2)补空格对齐冒号。
+    FIELD_LABELS = {"NO.": None, "NO": None, "序号": None,
+                    "进箱开始时间": "进箱开始", "进箱结束时间": "进箱结束"}
+    disp_w = lambda s: sum(2 if ord(c) > 0x2E7F else 1 for c in s)
+    kv_blocks = []
+    for row in tbl_rows:
+        kvs = []
+        for name, val in zip(tbl_head, row):
+            label = FIELD_LABELS.get(name, name)
+            if label is None or not val:
+                continue
+            kvs.append((label, val))
+        if kvs:
+            maxw = max(disp_w(k) for k, _ in kvs)
+            kv_blocks.append("\n".join(f"{k}{' ' * (maxw - disp_w(k))}: {v}" for k, v in kvs))
+
+    if kv_blocks:
+        lines.append(f"【进箱公告】查到 {len(kv_blocks)} 条")
+        lines.append("")
+        lines.append(("\n" + "─" * 24 + "\n").join(kv_blocks))
+    elif no_record:
+        # el-table 明确"暂无数据" → 真无记录, 输出友好文案而非页面正文
+        lines.append("【进箱公告】")
+        lines.append("")
+        lines.append("（该船次今日暂无进箱公告记录）")
+    else:
+        # 18s 未渲染出结构化数据行(结构非预期/加载慢) → body 文本兜底
+        body = vessel_main.strip()
+        if body:
+            lines.append("【进箱公告】")
+            lines.append(body)
+        else:
+            lines.append("（该船次今日暂无进箱公告记录）")
+    lines.append("")
+    lines.append("数据来源: 宁波港口EDI中心 (npedi.com)")
     return {"success": True, "data": "\n".join(lines), "error": ""}
 
 
@@ -925,3 +1104,54 @@ class NingboPort:
         return _browser_query(page, container_no, booking_no,
                               vessel_name=params.get("vessel_name", ""),
                               voyage_no=params.get("voyage_no", ""))
+
+    @staticmethod
+    def query_vessel_schedule(page, params: dict) -> dict:
+        """宁波进箱公告查询（船名/航次）— 「船期查询」卡片选宁波港时调用。
+
+        复用集装箱查询的短信登录编排：已有浏览器登录态则直接进 dailyZyjh 查询，
+        失效则短信验证码重新登录后查询。数据源 = 进箱公告页 dailyZyjh（与集装箱卡宁波同源）。
+        """
+        vessel_name = (params.get("vessel_name") or "").strip()
+        voyage_no = (params.get("voyage_no") or "").strip()
+        mobile = (params.get("npedi_mobile") or "").strip()
+        sms_session_id = params.get("sms_session_id", "")
+
+        if len(vessel_name) < 3:
+            return {"success": False, "data": "", "error": "请输入船名（英文 ≥3 字符）"}
+
+        # 已有浏览器登录态 → 直接浏览器查询进箱公告
+        had_auth_state = _load_auth_state()
+        if had_auth_state:
+            _log("[NPEDI] 尝试使用已有浏览器登录态查询进箱公告...")
+            try:
+                result = _browser_vessel_query(page, vessel_name, voyage_no)
+                if result.get("success"):
+                    return result
+                _log(f"[NPEDI] 浏览器查询未成功，准备短信登录: {result.get('error', '')}")
+            except Exception as e:
+                _log(f"[NPEDI] 浏览器查询异常: {e}")
+
+        # 需短信登录（复用 _npedi_login：图形验证码 OCR + 发短信 + wait_for_sms）
+        if not mobile:
+            mobile = _load_mobile()
+        if not mobile:
+            return {
+                "success": False,
+                "data": "",
+                "error": "请输入手机号（宁波港需短信登录）",
+            }
+
+        if not sms_session_id:
+            return {
+                "success": False,
+                "data": "",
+                "error": "__SMS_REQUIRED__",
+                "sms_session_created": True,
+            }
+
+        token = _npedi_login(page, mobile, sms_session_id)
+        if not token:
+            return {"success": False, "data": "", "error": "宁波港登录失败"}
+
+        return _browser_vessel_query(page, vessel_name, voyage_no)

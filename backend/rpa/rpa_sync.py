@@ -92,8 +92,9 @@ def sync_from_port(db: Session, raw_text: str, container_no: str, booking_no: st
     biz_order_no = booking_no.strip()  # 业务单号 → order_no
 
     canon = um.map_port_to_fields(port_name, raw_text, container_no=container_no, booking_no=booking_no)
-    # 船司订舱号/提单号 → bl_no（盐田提单号/蛇口订舱单号/青岛TDH/宁波[BL]段）
-    bl = canon["bl_no"] or canon["booking_no"] or booking_no.strip()  # 兜底: 宁波 blno 即提单号
+    # 提单号 → bl_no 列；船司订舱号/SO号 → booking_no 列（独立存储，不再同落 bl_no）
+    bl = canon["bl_no"]  # 提单号（盐田提单号/青岛TDH/宁波[BL]段）
+    sob = canon["booking_no"]  # 船司订舱号/SO号（蛇口订舱单号）
     size_type = canon["size_type"]
     seal = canon["seal"]
     gross_float = canon["gross"]
@@ -158,12 +159,22 @@ def sync_from_port(db: Session, raw_text: str, container_no: str, booking_no: st
         return result  # 无柜号，暂不同步
 
     if module == "FCL":
-        # 查重：按柜号或船司订舱号
-        existing = db.query(FCLOrder).filter(
-            (FCLOrder.container_no == ctn) | (FCLOrder.bl_no == bl)
-        ).first()
+        # 查重：优先柜号精确匹配（柜号是柜子唯一标识）
+        existing = db.query(FCLOrder).filter(FCLOrder.container_no == ctn).first()
+
+        # 柜号未命中 → 按船司订舱号/提单号（bl 非空才参与，避免空 bl 命中历史空单）
+        # 限制 container_no 为空或等于当前柜号，避免同 bl 多柜串号覆盖
+        if existing is None and bl:
+            existing = db.query(FCLOrder).filter(
+                FCLOrder.bl_no == bl,
+                FCLOrder.container_no.in_(["", ctn]),
+            ).first()
 
         if existing:
+            # 通过 bl 命中空柜单时补上柜号
+            if existing.container_no != ctn:
+                existing.container_no = ctn
+
             old_status = existing.status
             _advance_fcl_status(existing, mapped_status)
 
@@ -192,6 +203,8 @@ def sync_from_port(db: Session, raw_text: str, container_no: str, booking_no: st
                 existing.volume = volume_float
             if bl:
                 existing.bl_no = bl
+            if sob:
+                existing.booking_no = sob
             if seal:
                 existing.seal_no = seal
             if owner:
@@ -217,6 +230,7 @@ def sync_from_port(db: Session, raw_text: str, container_no: str, booking_no: st
                 container_no=ctn,
                 container_type=size_type,
                 bl_no=bl,
+                booking_no=sob,
                 seal_no=seal,
                 gross_weight=gross_float,
                 pieces=pieces,

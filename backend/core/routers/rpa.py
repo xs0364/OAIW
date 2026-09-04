@@ -20,13 +20,45 @@ from sqlalchemy.orm import Session
 
 from backend.config import settings
 from backend.database import get_db
-from backend.core.services import get_current_user
+from backend.core.services import get_current_user_required
 from backend.parser import extract_text
 
 router = APIRouter(prefix="/api/rpa", tags=["rpa"])
 
-# In-memory store for filled DOCX files (download_id -> path)
-_telex_download_store: dict[str, str] = {}
+# In-memory store for filled DOCX files (download_id -> {"path": ..., "label": ...})
+_telex_download_store: dict[str, dict] = {}
+
+
+def _get_nim_api_key(db: Session) -> str:
+    """NVIDIA NIM API key：优先 Setting 表 nim_api_key，回退环境变量 NIM_API_KEY。
+
+    历史硬编码 key 已随公开仓库泄露（见 audit-2026-08），须在 NVIDIA 控制台轮换后
+    将新 key 填入设置页（设置项 nim_api_key）。本模块不再内嵌任何密钥。
+    """
+    try:
+        from backend.core.models.setting import Setting
+        s = db.query(Setting).filter(Setting.key == "nim_api_key").first()
+        if s and s.value:
+            return s.value.strip()
+    except Exception:
+        pass
+    return os.environ.get("NIM_API_KEY", "")
+
+
+def _get_mimo_api_key(db: Session) -> str:
+    """小米 MiMo API key：优先 Setting 表 mimo_api_key，回退环境变量 MIMO_API_KEY。
+
+    2026-09-02 起电放保函提取主通道切小米 MiMo-V2.5（NIM deepseek 当日多次
+    ReadError 不稳）。key 从设置页/DB 读取，不内嵌源码。
+    """
+    try:
+        from backend.core.models.setting import Setting
+        s = db.query(Setting).filter(Setting.key == "mimo_api_key").first()
+        if s and s.value:
+            return s.value.strip()
+    except Exception:
+        pass
+    return os.environ.get("MIMO_API_KEY", "")
 
 
 class RpaTaskRequest(BaseModel):
@@ -54,24 +86,37 @@ def _send_completion_notification(user, task_name: str, result: dict):
         status_text = "完成" if result.get("success") else "失败"
         data_preview = result.get("data", "")
 
-        from backend.utils.email import send_notification_async
-        send_notification_async(
-            to_email=to_email,
-            subject=f"RPA 任务 {status_text}: {task_name}",
-            content_text=(
-                f"RPA 任务: {task_name}\n"
-                f"状态: {status_text}\n"
-                f"{'─' * 40}\n"
-                f"{data_preview}"
-            ),
-            task_name=task_name,
-        )
+        # 用发起任务用户自己的 SMTP 配置发送（后台线程，不阻塞主流程）
+        import threading
+        from backend.database import SessionLocal
+        from backend.utils.email import send_notification_email_to_user
+
+        def _send():
+            db = SessionLocal()
+            try:
+                send_notification_email_to_user(
+                    db,
+                    user.id,
+                    to_email=to_email,
+                    subject=f"RPA 任务 {status_text}: {task_name}",
+                    content_text=(
+                        f"RPA 任务: {task_name}\n"
+                        f"状态: {status_text}\n"
+                        f"{'─' * 40}\n"
+                        f"{data_preview}"
+                    ),
+                    task_name=task_name,
+                )
+            finally:
+                db.close()
+
+        threading.Thread(target=_send, daemon=True).start()
     except Exception:
         pass  # 通知失败不影响主流程
 
 
 @router.post("/sms/submit")
-async def submit_sms_code(data: dict):
+async def submit_sms_code(data: dict, _auth_user=Depends(get_current_user_required)):
     """
     用户提交短信验证码（由 RPA 流程等待）。
     前端在收到 __SMS_REQUIRED__ 事件后调用此端点。
@@ -86,7 +131,7 @@ async def submit_sms_code(data: dict):
 
 
 @router.post("/sms/session")
-async def create_sms_session():
+async def create_sms_session(_auth_user=Depends(get_current_user_required)):
     """创建短信验证码等待会话（前端在点击运行时调用）。"""
     from backend.rpa.sms_bridge import create_session
     session_id = create_session()
@@ -96,16 +141,11 @@ async def create_sms_session():
 @router.post("/run", response_model=RpaTaskResponse)
 async def run_rpa_task(
     req: RpaTaskRequest,
-    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
+    _auth_user=Depends(get_current_user_required),
 ):
     """运行 RPA 自动化任务。"""
-    user = None
-    if authorization:
-        try:
-            user = get_current_user(authorization.replace("Bearer ", ""), db)
-        except Exception:
-            user = None  # token 过期或无效，不阻止 RPA 执行
+    user = _auth_user
 
     from backend.rpa import run_browser_task
     result = await run_browser_task(req.task_type, req.params)
@@ -115,6 +155,7 @@ async def run_rpa_task(
         task_names = {
             "port_query": "港口集装箱查询",
             "port_status": "码头状态查询",
+            "vessel_schedule": "船期查询",
             "track_cargo": "货物跟踪",
         }
         task_name = task_names.get(req.task_type, req.task_type)
@@ -126,16 +167,11 @@ async def run_rpa_task(
 @router.post("/run/stream")
 async def run_rpa_task_stream(
     req: RpaTaskRequest,
-    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
+    _auth_user=Depends(get_current_user_required),
 ):
     """SSE 流式运行 RPA 任务，实时推送日志行。"""
-    user = None
-    if authorization:
-        try:
-            user = get_current_user(authorization.replace("Bearer ", ""), db)
-        except Exception:
-            user = None  # token 过期或无效，不阻止 RPA 执行
+    user = _auth_user
 
     log_queue: _queue.Queue = _queue.Queue()
 
@@ -187,7 +223,7 @@ async def run_rpa_task_stream(
 
 
 @router.post("/letter/generate")
-def generate_letter(params: dict, authorization: Optional[str] = Header(None)):
+def generate_letter(params: dict, _auth_user=Depends(get_current_user_required)):
     """生成保函（非危/电放）。"""
     letter_type = params.get("type", "non_hazardous")
     carrier = params.get("carrier", "")
@@ -384,6 +420,7 @@ def _fill_telex_text_template(template_path: str, extracted: dict) -> str:
     shipper_full = f"{shipper}\n{shipper_address}".strip() if shipper_address else shipper
     consignee = extracted.get("consignee", "")
     consignee_details = extracted.get("consignee_details", "") or consignee
+    notify_party = extracted.get("notify_party", "")
 
     text_placeholders = {
         "[发货人抬头]": shipper_full,
@@ -398,6 +435,7 @@ def _fill_telex_text_template(template_path: str, extracted: dict) -> str:
         "[提单号,开船日期，起运港]": bl_info,
         "[提单号, 开船日期，起运港]": bl_info,
         "[箱号]": container_no,
+        "[通知方]": notify_party,
     }
 
     for ph, val in text_placeholders.items():
@@ -411,10 +449,241 @@ def _fill_telex_text_template(template_path: str, extracted: dict) -> str:
     return text
 
 
+# ══════════════════════════════════════════════════════════════════
+# Label-anchored fill for "real blank form" LOI templates (case 3)
+# e.g.  "B/L NO (提单号) : "  /  "Shipper（托运人）:" — a field label then a
+# colon then nothing but trailing whitespace.  These carry neither a [token]
+# nor a dotted/underlined gap, so the token pass and the regex gap-fill both
+# skip them and the letter comes back blank.
+# ══════════════════════════════════════════════════════════════════
+
+# Ordered: the first prefix that matches the label start wins.
+_COMPANY_TOKEN_RE = re.compile(
+    r"\b(LTD|LIMITED|INC|GMBH|LLC|CORP|CO|BANK|公司|集团|株式|株式会社|"
+    r"LOGISTICS|FREIGHT|SHIPPING|TRADING|TECHNOLOGY|TRANSPORT|EXPRESS|"
+    r"INTERNATIONAL|HOLDINGS|AIR|OCEAN|CARGO)\b", re.I)
+
+
+def _looks_like_company(v: str) -> bool:
+    """粗判一段文本是否像公司名（含法律后缀/行业词），用于过滤表格表头噪声。
+
+    像 "FORWARDING AGENT REFERENCES / EXPORT REFERENCES / BILL OF LADING NO"
+    这类 OCR 表头既无公司后缀也无行业词，会被判为 False 而打回/跳过。
+    "TO THE ORDER OF HAMBURG BANK AG" 等占位收货人含 BANK → 视为合法放行。
+    """
+    v = (v or "").strip()
+    if not v:
+        return False
+    if re.search(r"\bTO (THE )?ORDER\b", v, re.I):
+        return True
+    return bool(_COMPANY_TOKEN_RE.search(v))
+
+
+def _align_company_suffix_to_ocr(value: str, bl_lines: list) -> str:
+    """公司名法律尾缀(IC/INC/LTD/LLC...)以提单 OCR 原文为准。
+
+    模型常把提单上的 'IC' 臆改成更常见的 'INC'(反之亦然)造成逐票漂移
+    (案例3 收货人 AOT LOGISTICS IC 曾被 LLM 改成 INC，用户确认真值为 IC)。
+    若 LLM 给的公司名主体能在 OCR 行中匹配、且该行带不同法律尾缀，
+    用 OCR 尾缀覆盖，宁信单据原文。
+    """
+    v = (value or "").strip()
+    if not v or not bl_lines:
+        return v
+    m = re.search(r"\b(INC|IC|LLC|LTD|LIMITED|GMBH|CO)[.,]*$", v, re.I)
+    if not m:
+        return v  # 无尾缀(如 'TO ORDER')不动
+    base = v[: m.start()].rstrip(" ,.")
+    if not base:
+        return v
+    base_u = re.sub(r"\s+", " ", base.upper())
+    for line in bl_lines:
+        clean = re.sub(r"#y\d+/[LCR]\s*|\[y=\d+\|[LCR]\]\s*", "", line)
+        cu = re.sub(r"\s+", " ", clean.upper()).strip()
+        if base_u not in cu:
+            continue
+        sm = re.search(r"\b(INC|IC|LLC|LTD|LIMITED|GMBH|CO)\b[.,]?$", cu)
+        if sm and sm.group(1).upper() != m.group(1).upper():
+            new_v = f"{base} {sm.group(1)}"
+            print(f"[suffix align] '{v}' → '{new_v}' (OCR 原文为准)")
+            return new_v
+        break  # 主体命中即止，无差异则保持原值
+    return v
+
+
+# 粘连短语白名单：PaddleOCR 常把相邻词丢空格合成一个 token
+# （如 SEABAYINTERNATIONALFREIGHTFORWARDINGLTD / NOTIFYPARTY）。用这些
+# 已知短语把粘连串拆回带空格文本，供 LLM 与 regex 兜底使用。
+# replace 只命中"无空格的整体粘连子串"，不碰已带空格的行，安全。
+_OCR_DEGLUE_PHRASES = [
+    "INTERNATIONAL FREIGHT FORWARDING",
+    "TO OBTAIN DELIVERY CONTACT",
+    "FORWARDING AGENT REFERENCES",
+    "FREIGHT AND CHARGES",
+    "DESCRIPTION OF GOODS",
+    "KIND OF PACKAGES",
+    "POINT AND COUNTRY OF ORIGIN",
+    "SAME AS CONSIGNEE",
+    "FREIGHT FORWARDING",
+    "NOTIFY PARTIES",
+    "NOTIFY PARTY",
+    "NOTIFY PARTIE",
+    "BILL OF LADING",
+    "EXPORT REFERENCES",
+    "DOCUMENT NO",
+    "CO., LTD", "CO. LTD", "CO.,LTD", "CO.LTD",
+    "CONTAINER NO",
+    "INTERNATIONAL",
+    "TECHNOLOGY",
+    "SHIPPING",
+    "LOGISTICS",
+    "TRANSPORT",
+    "HOLDINGS",
+    "TRADING",
+    "EXPRESS",
+    "FREIGHT",
+    "CONTAINER",
+    "CARGO",
+]
+
+
+def _deglue_ocr_text(text: str) -> str:
+    """恢复 OCR 粘连空格。只匹配短语去空格后的整体粘连子串。"""
+    if not text:
+        return text
+    for phrase in sorted(_OCR_DEGLUE_PHRASES,
+                         key=lambda p: len(p.replace(" ", "")), reverse=True):
+        glued = phrase.replace(" ", "")
+        if glued in text:
+            text = text.replace(glued, f" {phrase} ")
+    return re.sub(r" {2,}", " ", text)
+
+
+_FIELD_LABEL_PREFIXES = [
+    (r"(?:b\s*/\s*l|bl|提单|bill\s+of\s+lading)", "bl_no"),
+    (r"(?:ocean\s+vessel|vessel|voy(?:age)?|船名|航次)", "vessel_voyage"),
+    (r"(?:shipper|托运人|发货人)", "shipper"),
+    (r"(?:consignee|收货人)", "consignee"),
+    (r"(?:notify|通知方|通知人)", "notify_party"),
+    (r"(?:loading|discharging|delivery|port\s+of|起运港|目的港|装[卸货]港)", "pol_pod"),
+    (r"(?:cargo|goods|货物|品名)", "cargo_description"),
+]
+
+
+def _company_line(v: str) -> str:
+    """Collapse a company identification block to a single-line company name:
+    take the first line and keep only short legal-suffix continuations
+    ('CO., LTD' / 'LIMITED' / 'INC'), dropping street-address lines below."""
+    if not v:
+        return ""
+    lines = [ln.strip() for ln in str(v).splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    name = lines[0]
+    for ln in lines[1:]:
+        if len(ln) <= 24 and re.match(r"^(?:CO[.,]?|LTD|LIMITED|INC|GMBH|PTE|SDN)\b", ln, re.I):
+            name += " " + ln
+        else:
+            break
+    return name
+
+
+def _one_line(v: str) -> str:
+    """Flatten any extracted value onto one line for single-line blank fills."""
+    return re.sub(r"\s+", " ", (v or "")).strip()
+
+
+def _match_field_line(text: str, vals: dict):
+    """If a paragraph is a short '<field-label><colon> <nothing>' field line,
+    return the single-line value to append after the colon, else None.
+
+    Guards (skip and let the token / dotted / LLM paths own it):
+      - contains [ or ]           (token placeholders, signature instructions)
+      - dotted / ellipsis / underline gaps  (case 2 style)
+      - already has content after the colon
+      - label does not start with a known field keyword
+    """
+    if not text:
+        return None
+    if "[" in text or "]" in text:
+        return None
+    if len(text) > 80:                       # legal-body sentence, not a field
+        return None
+    if re.search(r"\.{4,}|…{2,}|_{4,}", text):
+        return None
+    m = re.search(r"[:：]", text)
+    if not m:
+        return None
+    label = text[: m.start()]
+    if not label:
+        return None
+    if text[m.end():].strip():               # value slot already has content
+        return None
+    for pat, key in _FIELD_LABEL_PREFIXES:
+        if re.match(pat, label, re.IGNORECASE):
+            v = vals.get(key)
+            return v if v else None
+    return None
+
+
+def _append_para_text(para, extra: str) -> None:
+    """Append text to a paragraph, reusing the last run so the font/underline of
+    the blank slot is preserved (empty underlined runs become the filled value)."""
+    runs = para.runs
+    if not runs:
+        para.add_run(extra)
+        return
+    last = runs[-1]
+    sep = " " if last.text and not last.text[-1].isspace() else ""
+    last.text = (last.text or "") + sep + extra
+
+
+def _label_anchor_fill(doc, vals: dict, changed: set) -> None:
+    """Second pass over a DOCX: append extracted values into 'label : <blank>'
+    field lines / blank table value cells of real blank form templates.
+    Paragraphs already rewritten by the token pass (`changed`) are skipped.
+    """
+    # Body paragraphs
+    for para in doc.paragraphs:
+        if id(para) in changed:
+            continue
+        val = _match_field_line(para.text, vals)
+        if val:
+            _append_para_text(para, val)
+            changed.add(id(para))
+    # Table rows: a matched label cell followed by a blank sibling value cell
+    for table in doc.tables:
+        for row in table.rows:
+            cells = list(row.cells)
+            for ci, cell in enumerate(cells):
+                label_txt = (cell.text or "").strip()
+                if not label_txt:
+                    continue
+                if "[" in label_txt or len(label_txt) > 80:
+                    break                        # token/content row
+                val = _match_field_line(label_txt, vals)
+                if not val:
+                    break                        # not a matched field row
+                for vi in range(ci + 1, len(cells)):
+                    vcell = cells[vi]
+                    if (vcell.text or "").strip():
+                        break                    # value slot already filled
+                    first_p = vcell.paragraphs[0] if vcell.paragraphs else vcell.add_paragraph()
+                    if id(first_p) in changed:
+                        break
+                    _append_para_text(first_p, val)
+                    changed.add(id(first_p))
+                    break
+                break
+
+
 def _fill_telex_docx(template_path: str, extracted: dict, carrier: str) -> str:
     """Replace placeholders in DOCX template with extracted B/L data.
 
-    Returns path to the filled DOCX file.
+    Works on the uploaded template IN PLACE (overwrites template_path) and
+    returns template_path — never generates a new file.
+    Passes: (1) [token] replacement across paragraphs/tables/headers/footers,
+    (2) label-anchored append for real blank-form "label : <blank>" fields.
     """
     import docx
     from docx import Document as DocxDocument
@@ -437,6 +706,18 @@ def _fill_telex_docx(template_path: str, extracted: dict, carrier: str) -> str:
     shipper_full = f"{shipper}\n{shipper_address}".strip() if shipper_address else shipper
     consignee = extracted.get("consignee", "")
     consignee_details = extracted.get("consignee_details", "") or consignee
+    notify_party = extracted.get("notify_party", "")
+
+    # single-line values for real-blank-form "label : <blank>" field lines
+    vals = {
+        "bl_no": _one_line(bl_no),
+        "vessel_voyage": _one_line(vessel_voyage),
+        "shipper": _company_line(shipper),
+        "consignee": _company_line(consignee),
+        "notify_party": _company_line(notify_party),
+        "pol_pod": _one_line(pol_pod),
+        "cargo_description": _one_line(extracted.get("cargo_description", "")),
+    }
 
     placeholders = {
         "[发货人抬头]": shipper_full,
@@ -451,6 +732,7 @@ def _fill_telex_docx(template_path: str, extracted: dict, carrier: str) -> str:
         "[提单号,开船日期，起运港]": bl_info,
         "[提单号, 开船日期，起运港]": bl_info,
         "[箱号]": container_no,
+        "[通知方]": vals["notify_party"],
     }
 
     def _replace_in_text(text: str) -> str:
@@ -458,6 +740,8 @@ def _fill_telex_docx(template_path: str, extracted: dict, carrier: str) -> str:
             if val:
                 text = text.replace(ph, val)
         return text
+
+    changed = set()  # paragraph ids already rewritten (skipped by label pass)
 
     # Process paragraphs
     for para in doc.paragraphs:
@@ -472,6 +756,7 @@ def _fill_telex_docx(template_path: str, extracted: dict, carrier: str) -> str:
             for r in para.runs[1:]:
                 r.text = ""
             first.text = new_text
+            changed.add(id(para))
 
     # Process tables
     for table in doc.tables:
@@ -487,6 +772,7 @@ def _fill_telex_docx(template_path: str, extracted: dict, carrier: str) -> str:
                         for r in para.runs[1:]:
                             r.text = ""
                         first.text = new_text
+                        changed.add(id(para))
 
     # Process headers and footers
     for section in doc.sections:
@@ -517,12 +803,14 @@ def _fill_telex_docx(template_path: str, extracted: dict, carrier: str) -> str:
                         r.text = ""
                     first.text = new_text
 
-    # Save to temp file
-    out_dir = os.path.join(os.path.dirname(template_path), "filled")
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"telex_filled_{uuid.uuid4().hex}.docx")
-    doc.save(out_path)
-    return out_path
+    # Label-anchored pass: fill real-blank-form "label : " field lines that the
+    # token pass (above) left untouched — appends single-line values in place.
+    _label_anchor_fill(doc, vals, changed)
+
+    # Save IN PLACE — overwrite the uploaded template itself.  User constraint:
+    # work on the uploaded template, never generate a new file.
+    doc.save(template_path)
+    return template_path
 
 
 def _fill_telex_doc_com(template_path: str, extracted: dict, carrier: str) -> str:
@@ -855,6 +1143,7 @@ def _regex_gap_fill(template_path: str, out_path: str, extracted: dict) -> None:
         ct = _val("container_no")
         g = _val("cargo_description")
         d = _val("date")
+        n = _val("notify_party")
         # For sentence context (Messrs), use only the first company name
         s_line = s.split('\n')[0] if s else s
 
@@ -906,6 +1195,10 @@ def _regex_gap_fill(template_path: str, out_path: str, extracted: dict) -> None:
             # (the full details block [insert ...] below gets consignee_details)
             (r'\([^)]*consignee[^)]*detail[^)]*\)',
              f" {c} " if c else None),
+
+            # ═══ Notify Party with dots (case 2 style) ═══
+            (r'Notify\s+Part(y|ies)\s*:\s*[\.…]+',
+             f"Notify Party : {_company_line(n)}" if n else None),
 
             # ═══ [insert ...] ═══
             (r'\[insert[^\]]*\]',
@@ -1197,8 +1490,8 @@ async def auto_fill_letter(
     certificate: UploadFile = File(..., description="鉴定书(PDF)"),
     template: UploadFile = File(None, description="非危保函模板(DOCX/DOC/PDF)"),
     carrier: str = Form(""),
-    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
+    _auth_user=Depends(get_current_user_required),
 ):
     """AI自动填写非危保函 - 解析MSDS和鉴定书，自动填充保函内容。"""
     # 1. Save uploaded files temporarily
@@ -1286,7 +1579,7 @@ async def auto_fill_letter(
         # 5. Use NVIDIA NIM for document extraction
         from backend.addons.llm.multi_agent import NVIDIA_API_BASE
 
-        nim_key = "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"
+        nim_key = _get_nim_api_key(db)
         model_used = "nvidia/nemotron-3-super-120b-a12b"
         api_url = NVIDIA_API_BASE
         api_key = nim_key
@@ -1402,7 +1695,7 @@ async def auto_fill_letter(
 
                     filled_docx_path = _gp_path
                     download_id = str(uuid.uuid4())
-                    _telex_download_store[download_id] = filled_docx_path
+                    _telex_download_store[download_id] = {"path": filled_docx_path, "label": "非危保函"}
 
                     filled_letter = await asyncio.to_thread(
                         extract_text, filled_docx_path
@@ -1499,8 +1792,8 @@ async def auto_fill_telex_letter(
     bill_of_lading: UploadFile = File(..., description="提单PDF"),
     template: UploadFile = File(None, description="电放保函模板(DOCX/DOC/PDF)"),
     carrier: str = Form(""),
-    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
+    _auth_user=Depends(get_current_user_required),
 ):
     """AI自动填充电放保函 - 解析提单内容，自动填充到电放保函模板。"""
     upload_dir = os.path.join(settings.UPLOAD_DIR, "auto_fill_telex")
@@ -1510,6 +1803,7 @@ async def auto_fill_telex_letter(
     file_handles = {"bl": bill_of_lading}
     if template:
         file_handles["template"] = template
+    filled_docx_path = ""  # final filled artifact — must survive the finally cleanup
 
     try:
         for name, f in file_handles.items():
@@ -1521,6 +1815,9 @@ async def auto_fill_telex_letter(
 
         # 1. Parse B/L text — use easyocr for better Chinese B/L OCR quality
         bl_text = await asyncio.to_thread(_extract_bl_text, saved_paths["bl"])
+        # PaddleOCR 常丢空格粘连（SEABAYINTERNATIONALFREIGHTFORWARDINGLTD / NOTIFYPARTY），
+        # 会让 LLM 误判/误提取；先用短语白名单恢复空格再喂模型与 regex 兜底。
+        bl_text = _deglue_ocr_text(bl_text)
 
         # 2. Parse template text (if provided)
         template_text = ""
@@ -1548,9 +1845,15 @@ async def auto_fill_telex_letter(
             "CRITICAL: The #y.../L|C|R tags are position hints only, NEVER include "
             "them in extracted field values. Extract only the actual document text.\n\n"
             "The text may contain OCR errors — use context to correct obvious mistakes.\n\n"
+            "GLUED-WORD RULE (IMPORTANT — this OCR drops the SPACES between words):\n"
+            "- 'EVERLIVELY' must be read as vessel 'EVER LIVELY' (split the glued word)\n"
+            "- 'PEPADS' = 'PE PADS'; 'MADE INCHINA' = 'MADE IN CHINA'\n"
+            "- 'SEABAYINTERNATIONALFREIGHTFORWARDINGLTD' = 'SEABAY INTERNATIONAL FREIGHT FORWARDING LTD'\n"
+            "Before writing any value, split all-caps glued tokens back into real words using "
+            "shipping/trade/English knowledge. NEVER copy a glued token verbatim.\n\n"
             "Return ONLY a valid JSON object. No other text. No reasoning.\n"
             '{"bl_no":"","vessel":"","voyage":"","pol":"","pod":"",'
-            '"shipper":"","consignee":"","container_no":"",'
+            '"shipper":"","consignee":"","notify_party":"","container_no":"",'
             '"cargo_description":"","date":"","place_of_issue":"",'
             '"shipper_address":"","consignee_details":""}'
         )
@@ -1565,6 +1868,7 @@ async def auto_fill_telex_letter(
             "- vessel (船名/vessel name — some B/Ls put it near 'VESSEL' label, "
             "others only at bottom near 'SIGNED FOR THE CARRIER' / 'as agents for the carrier'. "
             "Look for the distinctive vessel name, not just the word after 'VESSEL'.)\n"
+            "  OCR often glues the name — e.g. 'EVERLIVELY' = 'EVER LIVELY' (restore the space).\n"
             "- voyage (航次/voyage number, often after vessel name or near 'VOYAGE')\n"
             "- pol (起运港/port of loading, near 'PORT OF LOADING')\n"
             "- pod (目的港/port of discharge, near 'PORT OF DISCHARGE')\n"
@@ -1609,9 +1913,23 @@ async def auto_fill_telex_letter(
             "IMPORTANT: The B/L text contains #y.../L|C|R position tags - these are "
             "layout hints, NOT part of the document content. NEVER include these tags "
             "in your extracted values. Extract only the actual document text.\n"
+            "- notify_party (通知方/notify party): The party to be notified of arrival, "
+            "usually directly below the consignee under the 'NOTIFY PARTY' / '通知方' header.\n"
+            "  When consignee is 'TO ORDER' / 'TO THE ORDER OF', the notify party is often "
+            "the actual receiving company — extract that company name.\n"
+            "  Extract ONLY the company name (first line); do NOT include the full address. "
+            "If the notify party says 'SAME AS CONSIGNEE', return the consignee company name.\n"
             "- container_no (柜号/container number, format: 4 letters + 7 digits like FFAU2256329 or KBRU2611456. "
             "Do NOT confuse with B/L number! Container numbers always follow the pattern AAAA1234567.)\n"
-            "- cargo_description (品名/goods description)\n"
+            "  BULK/CASED goods have NO container: if the cargo is loose pieces (… CASES / CARTONS / PKGS / PCS) "
+            "and there is no real value under the 'CONTAINER NO' column, return \"\". "
+            "Do NOT grab numbers from the MARKS & NOS area (seal marks, contract refs like "
+            "'ZLCD+VYKQ2600103') even if they look like AAAA1234567.\n"
+            "- cargo_description (品名/goods description): the GOODS NAME ONLY "
+            "(e.g. 'PE PADS'). Do NOT append 'MADE IN ...' origin lines, package counts "
+            "('11 CASES'), seal/marks lines like 'SB-YWS26080149', container numbers, "
+            "or weights that sit on nearby lines. OCR may glue the name "
+            "('PEPADS' = 'PE PADS') — restore spaces.\n"
             "- date (装船日/shipped on board date)\n"
             "- place_of_issue (签发地/place of issue)\n\n"
             "Return ONLY the JSON. Values not found → use empty string."
@@ -1620,11 +1938,24 @@ async def auto_fill_telex_letter(
         # 5. Use NVIDIA NIM for document extraction (Phase 1 only)
         from backend.addons.llm.multi_agent import NVIDIA_API_BASE
 
-        nim_key = "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"
-        model_primary = "nvidia/nemotron-3-super-120b-a12b"
-        model_fallback = "openai/gpt-oss-120b"
-        api_url = NVIDIA_API_BASE
-        api_key = nim_key
+        nim_key = _get_nim_api_key(db)
+        mimo_key = _get_mimo_api_key(db)
+        # 2026-09-02: 主模型切小米 MiMo-V2.5（mimo-v2.5，官方 api.xiaomimimo.com/v1，
+        # key 存 Setting 表 mimo_api_key）。NIM deepseek-v4-pro 当日多次 ReadError
+        # （连接中断/限流）实测不稳；小米官方端点 api-key/Bearer 认证均验证 200。
+        # 有 mimo key 走小米，否则回退原 NIM 通道。
+        if mimo_key:
+            model_primary = "mimo-v2.5"
+            # fallback 也要走小米自家模型：NIM 的 deepseek 模型名发到小米端点会 400
+            # （主模型"返回推理无 JSON"时 _llm_call 会切 fallback 再打同一个小米 URL）。
+            model_fallback = "mimo-v2.5-pro"
+            api_url = "https://api.xiaomimimo.com/v1"
+            api_key = mimo_key
+        else:
+            model_primary = "deepseek-ai/deepseek-v4-pro-0813"
+            model_fallback = "openai/gpt-oss-120b"
+            api_url = NVIDIA_API_BASE
+            api_key = nim_key
 
         async def _llm_call(messages: list, max_tokens: int = 4096, temp: float = 0.05) -> str:
             """Call NVIDIA NIM with retry and model fallback. Returns response text."""
@@ -1636,12 +1967,18 @@ async def auto_fill_telex_letter(
                         headers = {"Content-Type": "application/json"}
                         if api_key:
                             headers["Authorization"] = f"Bearer {api_key}"
+                            # 小米官方端点用 api-key 头（Bearer 亦兼容 200）；NIM 忽略多余头
+                            if "xiaomimimo" in api_url:
+                                headers["api-key"] = api_key
                         url = f"{api_url.rstrip('/')}/chat/completions"
+                        # mimo-v2.5 为推理模型：思考过程占 reasoning_content，max_tokens 过小
+                        # 时 content 没空间出 JSON（实测 2048→content 空，24576→正常 JSON）。
+                        send_tokens = 24576 if "xiaomimimo" in api_url else max_tokens
                         payload = {
                             "model": model_name,
                             "messages": messages,
                             "temperature": temp,
-                            "max_tokens": max_tokens,
+                            "max_tokens": send_tokens,
                         }
                         async with httpx.AsyncClient(timeout=180.0) as cli:
                             resp = await cli.post(url, headers=headers, json=payload)
@@ -1652,13 +1989,21 @@ async def auto_fill_telex_letter(
                             await _asyncio.sleep(wait)
                             continue
                         resp.raise_for_status()
-                        text = resp.json()["choices"][0]["message"]["content"].strip()
+                        msg = (resp.json().get("choices") or [{}])[0].get("message") or {}
+                        text = (msg.get("content") or "").strip()
+                        if not text and model_idx == 0:
+                            # NIM reasoning models may return content=None, answer in reasoning_content
+                            text = (msg.get("reasoning_content") or "").strip()
+                            print(f"[auto-fill-telex] {model_name} empty content, fell back to reasoning_content")
                         if model_idx == 0 and not re.search(r'\{.*\}', text, re.DOTALL):
                             print(f"[auto-fill-telex] {model_name} returned reasoning, trying fallback")
                             break
+                        if not text:
+                            print(f"[auto-fill-telex] {model_name} attempt {attempt+1} empty content, retry")
+                            await _asyncio.sleep(2 ** attempt)
+                            continue
                         return text
-                    except (httpx.RemoteProtocolError, httpx.ConnectError,
-                            httpx.TimeoutException, httpx.HTTPStatusError) as e:
+                    except (httpx.TransportError, httpx.HTTPStatusError) as e:
                         wait = 2 ** attempt
                         print(f"[auto-fill-telex] {model_name} attempt {attempt+1} failed: {e}, retry in {wait}s")
                         await _asyncio.sleep(wait)
@@ -1670,13 +2015,19 @@ async def auto_fill_telex_letter(
             {"role": "system", "content": phase1_system},
             {"role": "user", "content": phase1_user},
         ]
-        extracted_text = await _llm_call(phase1_messages, max_tokens=2048)
-        print(f"[auto-fill-telex] Phase 1 response: {extracted_text[:300]}")
+        try:
+            extracted_text = await _llm_call(phase1_messages, max_tokens=2048)
+            print(f"[auto-fill-telex] Phase 1 response: {extracted_text[:300]}")
+        except Exception as e:
+            # NIM 完全不可用时降级走 regex 兜底，不让整单失败
+            extracted_text = ""
+            print(f"[auto-fill-telex] Phase 1 LLM failed "
+                  f"({e.__class__.__name__}: {str(e)[:150]}) — 走 regex 兜底提取")
 
         # Parse extracted JSON
         extracted = {
             "bl_no": "", "vessel": "", "voyage": "", "pol": "", "pod": "",
-            "shipper": "", "consignee": "", "container_no": "",
+            "shipper": "", "consignee": "", "notify_party": "", "container_no": "",
             "cargo_description": "", "date": "", "place_of_issue": "",
             "shipper_address": "", "consignee_details": "",
         }
@@ -1702,6 +2053,25 @@ async def auto_fill_telex_letter(
         else:
             extracted["vessel_voyage"] = extracted.get("vessel") or extracted.get("voyage") or ""
 
+        # Recover OCR-glued company names the LLM echoed back verbatim
+        # (SEABAYINTERNATIONALFREIGHTFORWARDINGLTD) before judging company-form,
+        # otherwise the glue hides the word-boundary tokens and the name is
+        # wrongly dropped as "not a company".
+        for _field in ("shipper", "consignee", "notify_party"):
+            _v = (extracted.get(_field) or "").strip()
+            _dg = _deglue_ocr_text(_v)
+            if _dg != _v:
+                print(f"[deglue] {_field} '{_v[:50]}' → '{_dg[:60]}'")
+                extracted[_field] = _dg
+
+        # Post-check: drop table-header noise the LLM mistook for company names.
+        # A wrong non-empty value is worse than blank (regex fallback or manual fill below).
+        for _field in ("shipper", "consignee", "notify_party"):
+            _val = (extracted.get(_field) or "").strip()
+            if _val and not _looks_like_company(_val):
+                print(f"[noise drop] {_field} AI 值 '{_val[:40]}' 非公司形态 → 置空走 regex 兜底")
+                extracted[_field] = ""
+
         # Fallback: always run regex as a cross-check for shipper / consignee
         bl_upper = bl_text.upper()
         bl_lines = bl_text.split("\n")
@@ -1723,10 +2093,20 @@ async def auto_fill_telex_letter(
                                ["ENDORSEMENT", "AGENT", "LOAD", "STOW", "COUNT",
                                 "SEALED", "CARRIER", "VESSEL", "PORT OF"]):
                             continue
+                        # Skip table-header noise sitting right under the SHIPPER label
+                        # (e.g. OCR row "BILL OF LADING NO / DOCUMENT NO") — mirror the
+                        # consignee fallback below: a candidate must look like a company.
+                        if not _looks_like_company(candidate):
+                            continue
                         # Build shipper name: check next lines for continuation
                         name_parts = [candidate]
                         continue_idx = j
                         for k in range(j + 1, min(j + 3, len(bl_lines))):
+                            # A line that already ends with a legal suffix IS the full
+                            # company name — don't swallow the next line (often the
+                            # B/L no in an adjacent C-column of the same OCR row).
+                            if re.search(r"\b(LTD|LIMITED|INC|GMBH)\b", candidate.upper()):
+                                break
                             cont = bl_lines[k].strip()
                             cont_clean = re.sub(r'^[:\s]*|[:\s]*$', '', cont)
                             cont_clean = re.sub(r'#y\d+/[LCR]\s*|\[y=\d+\|[LCR]\]\s*', '', cont_clean).strip()
@@ -1837,6 +2217,9 @@ async def auto_fill_telex_letter(
                         if any(kw in candidate.upper() for kw in
                                ["NOTIFY", "SHIPPER", "VESSEL", "PORT OF"]):
                             break
+                        # Skip table-header noise (e.g. FORWARDING AGENT REFERENCES)
+                        if not _looks_like_company(candidate):
+                            continue
                         parts.append(candidate)
                     if parts:
                         _consignee_parts = parts
@@ -1919,6 +2302,73 @@ async def auto_fill_telex_letter(
                     if fallback_name.upper().strip() != shipper_upper:
                         extracted["consignee"] = fallback_name
 
+        # --- Notify party fallback (only fills when the AI left it empty) ---
+        if not (extracted.get("notify_party") or "").strip():
+            _notify_value = ""
+            for sep in ["NOTIFY PARTY", "NOTIFY PARTIES", "NOTIFY PARTIE", "通知方"]:
+                for i, line in enumerate(bl_lines):
+                    # OCR often glues the label (e.g. "NOTIFYPARTY" with no space) —
+                    # compare whitespace-stripped so the fallback still fires.
+                    if sep.replace(" ", "") in re.sub(r"\s+", "", line.upper()):
+                        for j in range(i + 1, min(i + 6, len(bl_lines))):
+                            cand = bl_lines[j].strip()
+                            cand = re.sub(r"^[:\s]*|[:\s]*$", "", cand)
+                            cand = re.sub(r"#y\d+/[LCR]\s*|\[y=\d+\|[LCR]\]\s*", "", cand).strip()
+                            if not cand:
+                                continue
+                            if any(kw in cand.upper() for kw in
+                                   ["SHIPPER", "CONSIGNEE", "VESSEL", "VOYAGE",
+                                    "PORT OF", "CONTAINER", "FREIGHT"]):
+                                break
+                            if re.match(r"^(SAME AS|AS CONSIGNEE)\b", cand, re.I):
+                                _notify_value = _company_line(extracted.get("consignee", ""))
+                                break
+                            if any(kw in cand.upper() for kw in
+                                   ["ENDORSEMENT", "LOAD", "STOW", "COUNT", "CARRIER"]):
+                                continue
+                            if not _looks_like_company(cand):
+                                continue
+                            _notify_value = cand
+                            break
+                        break
+                if _notify_value:
+                    break
+            if _notify_value:
+                extracted["notify_party"] = _notify_value
+                print(f"[notify fallback] {_notify_value}")
+
+        # Legal-suffix alignment: 公司名尾缀以提单 OCR 原文为准
+        # (模型常把 AOT LOGISTICS IC 臆改成 INC；用户确认真值=提单 OCR 的 IC)
+        for _f in ("shipper", "consignee", "notify_party"):
+            _suf = (extracted.get(_f) or "").strip()
+            if _suf:
+                extracted[_f] = _align_company_suffix_to_ocr(_suf, bl_lines)
+
+        # Container-no guard: 柜号必须出现在 CONTAINER/SEAL 语境。
+        # 散货(件货)无柜号——模型常把唛头/单号(如 ZLCD+VYKQ2600103 里的
+        # VYKQ2600103，形似 AAAA1234567)误判为柜号(E2E#7 实证)。该号在
+        # OCR 上下文无 CONTAINER/SEAL 词 → 置空；真柜号行通常在
+        # 'CONTAINER NO'/'SEAL NO' 栏，保留。
+        _ctn = (extracted.get("container_no") or "").strip()
+        if _ctn:
+            _ctn_u = _ctn.upper()
+            _found_in_ctn_ctx = False
+            for _i, _ln in enumerate(bl_lines):
+                _clean = re.sub(
+                    r"#y\d+/[LCR]\s*|\[y=\d+\|[LCR]\]\s*", "", _ln).upper()
+                if _ctn_u not in _clean:
+                    continue
+                _ctx = " ".join(
+                    bl_lines[max(0, _i - 2): _i + 3]).upper()
+                if any(k in _ctx for k in
+                       ("CONTAINER", "SEAL", "柜", "CTN NO")):
+                    _found_in_ctn_ctx = True
+                break
+            if not _found_in_ctn_ctx:
+                print(f"[container guard] drop {_ctn} "
+                      f"(不在 CONTAINER/SEAL 语境，判为唛头/单号)")
+                extracted["container_no"] = ""
+
         # ═══════════════════════════════════════════════════════
         # Phase 2: Generic LLM-driven template filling
         # Works with ANY template format — no hardcoded mappings.
@@ -1944,11 +2394,13 @@ async def auto_fill_telex_letter(
                         extract_text, filled_docx_path
                     )
                     download_id = str(uuid.uuid4())
-                    _telex_download_store[download_id] = filled_docx_path
+                    _telex_download_store[download_id] = {"path": filled_docx_path, "label": "电放保函"}
                     print(f"  Fast fill OK -> {os.path.basename(filled_docx_path)}")
                 except Exception as e:
                     print(f"  Fast fill failed: {e}")
-                    filled_docx_path = ""
+                    raise ValueError(
+                        f"模板填充失败：{e}。请确认上传的是未损坏的 .docx/.doc 保函模板。"
+                    )
 
                 # 2b. Check if template still has unfilled placeholders / gaps
                 _needs_llm = False
@@ -2023,16 +2475,13 @@ async def auto_fill_telex_letter(
                         if isinstance(replacements, dict):
                             replacements = replacements.get("replacements", [])
                         if isinstance(replacements, list) and replacements:
-                            out_dir = os.path.join(upload_dir, "filled")
-                            _gp = os.path.join(out_dir, f"telex_filled_{uuid.uuid4().hex}.docx")
+                            # Apply IN PLACE on the already-filled template file
+                            # (constraint: work on the uploaded template, no new file).
                             await asyncio.to_thread(
-                                _apply_global_replacements, filled_docx_path, _gp, replacements
+                                _apply_global_replacements, filled_docx_path, filled_docx_path, replacements
                             )
-                            filled_docx_path = _gp
-                            filled_letter = await asyncio.to_thread(extract_text, _gp)
-                            download_id = str(uuid.uuid4())
-                            _telex_download_store[download_id] = _gp
-                            print(f"  Gap-fill applied ({len(replacements)} replacements)")
+                            filled_letter = await asyncio.to_thread(extract_text, filled_docx_path)
+                            print(f"  Gap-fill applied in-place ({len(replacements)} replacements)")
                         else:
                             print(f"  LLM returned no usable replacements")
                     except Exception as e:
@@ -2084,7 +2533,9 @@ async def auto_fill_telex_letter(
                     print(f"  Converted to DOCX: {os.path.basename(converted_path)} "
                           f"({os.path.getsize(converted_path)} bytes)")
 
-                    # Now use the same DOCX pipeline: fast mapping + LLM gap-fill
+                    # Now use the same DOCX pipeline: fast mapping + LLM gap-fill.
+                    # _fill_telex_docx works IN PLACE on the converted DOCX, which
+                    # becomes the final filled artifact (no new file is created).
                     try:
                         fill_out = await asyncio.to_thread(
                             _fill_telex_docx, converted_path, extracted, carrier or ""
@@ -2092,12 +2543,12 @@ async def auto_fill_telex_letter(
                         filled_letter = await asyncio.to_thread(extract_text, fill_out)
                         filled_docx_path = fill_out
                         download_id = str(uuid.uuid4())
-                        _telex_download_store[download_id] = fill_out
-                        print(f"  Fast fill OK -> {os.path.basename(fill_out)}")
+                        _telex_download_store[download_id] = {"path": fill_out, "label": "电放保函"}
+                        print(f"  Fast fill OK (in-place) -> {os.path.basename(fill_out)}")
                     except Exception as e:
                         print(f"  Fast fill failed: {e}")
 
-                    # Check for remaining gaps → regex gap-fill (reliable, no API)
+                    # Check for remaining gaps → regex gap-fill in-place (reliable, no API)
                     if filled_docx_path:
                         _raw = filled_letter or ""
                         _needs_gap_fill = bool(re.search(
@@ -2107,46 +2558,26 @@ async def auto_fill_telex_letter(
                         if _needs_gap_fill:
                             print("  Regex gap-filling remaining placeholders...")
                             try:
-                                _gp = fill_out.replace(".docx", f"_gapfill_{uuid.uuid4().hex}.docx")
                                 await asyncio.to_thread(
-                                    _regex_gap_fill, fill_out, _gp, extracted
+                                    _regex_gap_fill, filled_docx_path, filled_docx_path, extracted
                                 )
-                                filled_docx_path = _gp
-                                filled_letter = await asyncio.to_thread(extract_text, _gp)
-                                download_id = str(uuid.uuid4())
-                                _telex_download_store[download_id] = _gp
-                                print(f"  Regex gap-fill applied -> {os.path.basename(_gp)}")
+                                filled_letter = await asyncio.to_thread(extract_text, filled_docx_path)
+                                print(f"  Regex gap-fill applied in-place -> {os.path.basename(filled_docx_path)}")
                             except Exception as e:
                                 print(f"  Regex gap-fill failed: {e}")
                         else:
                             print("  No remaining gaps detected")
 
-                    # Clean up the temporary converted file
-                    try: os.remove(converted_path)
-                    except: pass
+                    # The converted DOCX stays as the final artifact (in-place fill).
+                    # NOTE: it is NOT deleted here; finally-skip below protects the
+                    # uploaded template only when it IS the artifact (DOCX branch).
 
                 except Exception as e:
-                    print(f"[auto-fill-telex] .doc conversion+fill failed: {e}, falling back to text LLM fill...")
-                    # Fallback: text+LLM (same as before, no format preservation)
-                    try:
-                        doc_text = await asyncio.to_thread(extract_text, template_path)
-                        _sys = "You are a document-filling specialist. Fill the telex template using extracted data. Return ONLY filled text."
-                        _usr = f"## Template\n{doc_text}\n\n## Data\n{extracted_text}\n\nCarrier: {carrier or 'Unknown'}\n\nFill ALL placeholders like [xxx], ...., ____, (shipper name). Output ONLY the filled text."
-                        filled_letter = await _llm_call([{"role":"system","content":_sys},{"role":"user","content":_usr}], 4096)
-                        out_path = template_path + "_filled.docx"
-                        try:
-                            from docx import Document as DocxDoc
-                            d = DocxDoc()
-                            for line in filled_letter.split('\n'): d.add_paragraph(line)
-                            d.save(out_path)
-                        except:
-                            out_path = template_path + "_filled.txt"
-                            with open(out_path,"w",encoding="utf-8") as f: f.write(filled_letter)
-                        filled_docx_path = out_path
-                        download_id = str(uuid.uuid4())
-                        _telex_download_store[download_id] = out_path
-                    except Exception as e3:
-                        print(f"  Text fallback also failed: {e3}")
+                    print(f"[auto-fill-telex] .doc conversion+fill failed: {e}")
+                    raise ValueError(
+                        f".doc 模板无法转换/填充：{e}。请将模板另存为 .docx 后重试"
+                        "（按约定在上传模板上原位填充、保持版式，不做文本重建）。"
+                    )
 
         else:
             # No template — use default text template with LLM fill
@@ -2206,7 +2637,7 @@ async def auto_fill_telex_letter(
             pass
         return {
             "success": False,
-            "error": str(e),
+            "error": str(e) or e.__class__.__name__,
             "filled_letter": "",
             "extracted": {},
             "model_used": "",
@@ -2215,22 +2646,25 @@ async def auto_fill_telex_letter(
     finally:
         for path in saved_paths.values():
             try:
-                if os.path.exists(path):
+                # In-place fill overwrites the uploaded template — when it IS the
+                # final filled artifact (DOCX branch) keep it for download.
+                if os.path.exists(path) and path != filled_docx_path:
                     os.remove(path)
             except Exception:
                 pass
 
 
 @router.get("/letter/download/{download_id}")
-async def download_filled_telex(download_id: str):
+async def download_filled_telex(download_id: str, _auth_user=Depends(get_current_user_required)):
     """下载已填写的电放保函 DOCX 文件。"""
-    file_path = _telex_download_store.get(download_id)
-    if not file_path or not os.path.exists(file_path):
+    entry = _telex_download_store.get(download_id)
+    if not entry or not os.path.exists(entry.get("path", "")):
         raise HTTPException(status_code=404, detail="文件不存在或已过期")
-    filename = f"电放保函_{uuid.uuid4().hex[:8]}.docx"
+    label = entry.get("label") or "保函"
+    filename = f"{label}_{uuid.uuid4().hex[:8]}.docx"
     from fastapi.responses import FileResponse
     return FileResponse(
-        file_path,
+        entry["path"],
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=filename,
     )

@@ -5,11 +5,12 @@
 
     <el-row :gutter="20">
       <el-col :span="8" v-for="task in rpaTasks" :key="task.name">
-        <el-card shadow="hover" style="margin-bottom: 16px">
+        <el-card shadow="hover" style="margin-bottom: 16px" :class="{ 'rpa-card-off': task.disabled }">
           <template #header>
             <div style="display: flex; align-items: center; gap: 8px">
               <el-icon :size="20" :color="task.color"><component :is="task.icon" /></el-icon>
               <b>{{ task.name }}</b>
+              <el-tag v-if="task.disabled" size="small" type="info" effect="plain" style="flex-shrink: 0">{{ task.disabledTip }}</el-tag>
             </div>
           </template>
           <p style="font-size: 13px; color: #606266; min-height: 36px">{{ task.desc }}</p>
@@ -25,29 +26,42 @@
             </el-select>
           </div>
 
+          <!-- 船期查询输入 -->
+          <div v-if="task.name === '船期查询'" style="margin-bottom: 10px">
+            <el-select v-model="task.params.port_name" placeholder="选择码头" size="small" style="width: 100%; margin-bottom: 8px">
+              <el-option label="盐田港" value="盐田" />
+              <el-option label="蛇口港" value="蛇口" />
+              <el-option label="宁波港" value="宁波" />
+            </el-select>
+            <el-input v-model="task.params.vessel_name" placeholder="船名 (必填, 英文 ≥3字符) eg. ONE SAN DIEGO" size="small" style="margin-bottom: 6px" />
+            <el-input v-model="task.params.voyage_no" :placeholder="task.params.port_name === '蛇口' ? '商业航次 (可选) eg. 2605S' : task.params.port_name === '宁波' ? '航次 (可选)' : '码头航次 (可选, 不填则按船名查全部航次)'" size="small" style="margin-bottom: 6px" />
+            <!-- 宁波港：手机号输入（短信登录） -->
+            <div v-if="task.params.port_name === '宁波'" style="margin-bottom: 6px">
+              <el-input v-model="task.params.npedi_mobile" placeholder="手机号（用于宁波港短信登录）" size="small">
+                <template #prepend><el-icon><Phone /></el-icon></template>
+              </el-input>
+            </div>
+            <div v-if="task.params.port_name === '宁波'" style="font-size: 12px; color: #909399; margin-top: 4px">⚡ 宁波港需短信验证码登录，填写手机号后首次运行会弹出验证码输入框</div>
+            <el-input v-if="task.params.port_name !== '蛇口' && task.params.port_name !== '宁波'" v-model="task.params.etb_time" placeholder="起始日期 (可选, 格式 yyyymmdd, 留空=当天)" size="small" />
+          </div>
+
           <!-- 集装箱查询输入 -->
           <div v-if="task.name === '集装箱查询'" style="margin-bottom: 10px">
             <el-select v-model="task.params.port_name" placeholder="选择港口" size="small" style="width: 100%; margin-bottom: 8px"
               @change="onPortChange(task)">
               <el-option label="盐田港" value="盐田港" />
               <el-option label="蛇口港" value="蛇口港" />
-              <el-option label="上海港" value="上海港" />
               <el-option label="宁波港" value="宁波港" />
               <el-option label="青岛港" value="青岛港" />
             </el-select>
             <!-- 宁波港：手机号输入 -->
             <div v-if="task.params.port_name === '宁波港'" style="margin-bottom: 6px">
               <el-input v-model="task.params.npedi_mobile" placeholder="手机号（用于宁波港短信登录）" size="small">
-                <template #prepend>📱</template>
+                <template #prepend><el-icon><Phone /></el-icon></template>
               </el-input>
             </div>
             <el-input v-model="task.params.container_no" placeholder="集装箱号 (必填) eg. TLLU4109819" size="small" style="margin-bottom: 6px" />
             <el-input v-model="task.params.booking_no" placeholder="订舱号 (可选) eg. 149604151004" size="small" />
-            <!-- 宁波港：进箱公告查询条件 -->
-            <div v-if="task.params.port_name === '宁波港'" style="margin-bottom: 6px">
-              <el-input v-model="task.params.vessel_name" placeholder="船名（进箱公告筛选，可选）" size="small" style="margin-bottom: 4px" />
-              <el-input v-model="task.params.voyage_no" placeholder="航次（进箱公告筛选，可选）" size="small" />
-            </div>
             <div style="font-size: 12px; color: #909399; margin-top: 4px">⚡ 宁波港需短信验证码登录，填写手机号后首次运行会弹出验证码输入框</div>
           </div>
 
@@ -68,10 +82,13 @@
           <div v-if="task.name === '非危保函填写'" style="margin-bottom:12px">
             <el-button size="small" :type="task.autoMode ? 'primary' : 'default'"
               @click="toggleAutoFill(task)" style="margin-bottom:10px;width:100%">
-              {{ task.autoMode ? '🤖 AI自动填写模式' : '📋 手动填写模式' }}
+              <template v-if="task.autoMode"><el-icon style="vertical-align:-2px;margin-right:3px"><MagicStick /></el-icon>AI自动填写模式</template>
+              <template v-else><el-icon style="vertical-align:-2px;margin-right:3px"><EditPen /></el-icon>手动填写模式</template>
             </el-button>
 
             <div v-if="task.autoMode" class="auto-fill-section">
+              <!-- ⚠️ AI 填写草稿提醒 -->
+              <div class="ai-note"><el-icon style="vertical-align:-2px;margin-right:4px"><MagicStick /></el-icon>AI 自动填写基于 MSDS / 鉴定书识别，内容可能出错，须人工核对后方可盖章使用。</div>
               <!-- 拖放上传区 -->
               <div class="auto-drop-zone"
                 @dragover.prevent="fileDragOver = true"
@@ -125,10 +142,13 @@
           <div v-if="task.name === '电放保函生成'" style="margin-bottom:12px">
             <el-button size="small" :type="task.autoMode ? 'primary' : 'default'"
               @click="toggleAutoFill(task)" style="margin-bottom:10px;width:100%">
-              {{ task.autoMode ? '🤖 AI自动填写模式' : '📋 手动填写模式' }}
+              <template v-if="task.autoMode"><el-icon style="vertical-align:-2px;margin-right:3px"><MagicStick /></el-icon>AI自动填写模式</template>
+              <template v-else><el-icon style="vertical-align:-2px;margin-right:3px"><EditPen /></el-icon>手动填写模式</template>
             </el-button>
 
             <div v-if="task.autoMode" class="auto-fill-section">
+              <!-- ⚠️ AI 填写草稿提醒 -->
+              <div class="ai-note"><el-icon style="vertical-align:-2px;margin-right:4px"><MagicStick /></el-icon>AI 自动填写基于提单图片识别，个别字段可能出错，成品须人工逐项核对后方可盖章使用。</div>
               <div class="auto-drop-zone"
                 @dragover.prevent="fileDragOver = true"
                 @dragleave.prevent="fileDragOver = false"
@@ -140,12 +160,12 @@
                 </div>
                 <div class="drop-files">
                   <div class="drop-file-item" :class="{ filled: task.blFile }">
-                    <span class="drop-label">📄 提单</span>
+                    <span class="drop-label"><el-icon style="vertical-align:-2px;margin-right:3px"><Document /></el-icon>提单</span>
                     <span class="drop-value">{{ task.blFile ? task.blFile.name : '等待文件（必填）' }}</span>
                     <el-button v-if="task.blFile" text size="small" style="color:#c0c4cc;padding:0" @click.stop="task.blFile = null">×</el-button>
                   </div>
                   <div class="drop-file-item" :class="{ filled: task.templateFile }">
-                    <span class="drop-label">📋 模板</span>
+                    <span class="drop-label"><el-icon style="vertical-align:-2px;margin-right:3px"><Files /></el-icon>模板</span>
                     <span class="drop-value">{{ task.templateFile ? task.templateFile.name : '等待文件（可选）' }}</span>
                     <el-button v-if="task.templateFile" text size="small" style="color:#c0c4cc;padding:0" @click.stop="task.templateFile = null">×</el-button>
                   </div>
@@ -182,14 +202,25 @@
             <el-button v-if="task.name === '集装箱查询' && task.queryDone" type="success" size="small" @click="goMergeFill(task)">
               合并录入佰信
             </el-button>
+            <el-button v-if="task.name === '集装箱查询' && task.queryDone" type="warning" size="small" @click="goStandardize(task)">
+              字段标准化
+            </el-button>
+            <el-checkbox v-model="task.resultOnly" size="small" style="margin-right: 4px">仅显示结果</el-checkbox>
             <el-button size="small" @click="task.showLogs = !task.showLogs">
-              {{ task.showLogs ? '隐藏日志' : '日志' }}
+              {{ task.showLogs ? '收起日志' : '日志' }}
             </el-button>
             <el-button size="small" @click="clearLogs(task)" v-if="task.logLines.length > 1">清空</el-button>
           </div>
 
           <!-- 填写结果预览面板 -->
           <div v-if="task.filledLetter" class="result-panel">
+            <!-- ⚠️ AI 识别结果仅作草稿：盖章/发出前必须人工逐项核对 -->
+            <div v-if="task.name === '电放保函生成'" class="ai-verify-warning">
+              <el-icon style="vertical-align:-2px"><WarningFilled /></el-icon> <b>AI 识别可能有误。</b> 请对照正本提单逐项核对：提单号、船名/航次、发货人、收货人、通知方、卸货港、品名/件数，确认无误并加盖公章后本保函才可发出——收货人将凭其提取货物，错填可能导致错放或拒付，责任由贵司承担。
+            </div>
+            <div v-else-if="task.name === '非危保函填写'" class="ai-verify-warning">
+              <el-icon style="vertical-align:-2px"><WarningFilled /></el-icon> <b>AI 识别可能有误。</b> 请对照 MSDS 与鉴定书核对：品名、CAS 号、UN 编号、件数。货物实际为危险品却按非危申报属瞒报，责任重大，务必确认与所附证书一致后再盖章。
+            </div>
             <div class="result-header">
               <span style="font-weight:600">填充结果</span>
               <div style="display:flex;gap:6px">
@@ -213,11 +244,11 @@
 
           <!-- 日志区域 -->
           <div v-if="task.showLogs" style="margin-top: 8px; background: #1d1e1f; color: #00ff00; padding: 8px; border-radius: 4px; font-size: 12px; max-height: 250px; overflow-y: auto; font-family: 'Courier New', monospace">
-            <div v-for="(line, i) in task.logLines" :key="i" style="line-height: 1.6">
+            <div v-for="(line, i) in visibleLogs(task)" :key="i" style="line-height: 1.6">
               <span style="color: #888">[{{ line.time }}]</span>
               <span :style="{ color: line.color || '#00ff00' }"> {{ line.text }}</span>
             </div>
-            <div v-if="task.logLines.length === 0" style="color: #666">无日志</div>
+            <div v-if="visibleLogs(task).length === 0" style="color: #666">{{ task.resultOnly ? '暂无结果（过程日志已隐藏）' : '无日志' }}</div>
           </div>
         </el-card>
       </el-col>
@@ -229,7 +260,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Ship, Ticket, Search, Files, CreditCard, UploadFilled } from '@element-plus/icons-vue'
+import { Ship, Ticket, Search, Files, CreditCard, UploadFilled, Calendar, MagicStick, EditPen, Document, WarningFilled, Phone } from '@element-plus/icons-vue'
 import client from '../api/client'
 
 const router = useRouter()
@@ -244,32 +275,54 @@ function goMergeFill(task) {
   })
 }
 
+function goStandardize(task) {
+  router.push({
+    name: 'ContainerStandardize',
+    query: {
+      container_no: task.params.container_no || '',
+      port_name: task.params.port_name || '',
+    },
+  })
+}
+
 const fileDragOver = ref(false)
 
 function ts() {
   return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function log(task, text, color = '') {
-  task.logLines.push({ time: ts(), text, color })
+function log(task, text, color = '', isResult = false) {
+  task.logLines.push({ time: ts(), text, color, isResult })
+}
+
+// 仅显示结果：开启时只返回标记为结果的行（过程日志仍完整记录在 logLines 里）
+function visibleLogs(task) {
+  if (!task.resultOnly) return task.logLines
+  return task.logLines.filter(l => l.isResult)
 }
 
 const rpaTasks = ref([
   {
     name: '集装箱查询', icon: Search, color: '#409eff',
-    desc: '输入柜号查询盐田/蛇口/上海/宁波/青岛等港口的集装箱在场状态',
-    status: '就绪', showLogs: false, logLines: [], queryDone: false,
+    desc: '输入柜号查询盐田/蛇口/宁波/青岛等港口的集装箱在场状态',
+    status: '就绪', showLogs: false, resultOnly: true, logLines: [], queryDone: false,
     params: { port_name: '盐田港', container_no: '', booking_no: '', npedi_mobile: localStorage.getItem('npedi_mobile') || '', vessel_name: '', voyage_no: '' }, files: [],
   },
   {
     name: '码头状态查询', icon: Ship, color: '#67c23a',
     desc: '自动查盐田/蛇口/上海/宁波/青岛码头开港、进港、放行状态',
-    status: '就绪', showLogs: false, logLines: [], params: { port_name: '盐田' }, files: [],
+    disabled: true, disabledTip: '已停用',
+    status: '就绪', showLogs: false, resultOnly: true, logLines: [], params: { port_name: '盐田' }, files: [],
+  },
+  {
+    name: '船期查询', icon: Calendar, color: '#e6a23c',
+    desc: '输入船名查码头船舶靠泊/离港计划或进箱公告（盐田/蛇口/宁波）—— 只需船名，航次可留空',
+    status: '就绪', showLogs: false, resultOnly: true, logLines: [], params: { port_name: '盐田', vessel_name: '', voyage_no: '', etb_time: '', npedi_mobile: localStorage.getItem('npedi_mobile') || '' }, files: [],
   },
   {
     name: '非危保函填写', icon: Ticket, color: '#9b59b6',
     desc: '上传MSDS和鉴定书，AI自动提取信息填入非危保函',
-    status: '就绪', showLogs: false, logLines: [],
+    status: '就绪', showLogs: false, resultOnly: true, logLines: [],
     params: { type: 'non_hazardous', carrier: '', data: {} },
     files: [],
     msdsFile: null,
@@ -281,19 +334,20 @@ const rpaTasks = ref([
   {
     name: '电放保函生成', icon: Files, color: '#f56c6c',
     desc: '上传提单(B/L)和电放保函模板，AI自动填充电放保函',
-    status: '就绪', showLogs: false, logLines: [], params: { type: 'telex', carrier: 'MSK', data: {} }, files: [],
+    status: '就绪', showLogs: false, resultOnly: true, logLines: [], params: { type: 'telex', carrier: 'MSK', data: {} }, files: [],
     autoMode: false, blFile: null, templateFile: null, carrierInput: '',
     filledLetter: '', extractedFields: {}, copied: false, downloadId: '',
   },
   {
     name: '拼柜箱单合并', icon: CreditCard, color: '#909399',
     desc: '将多家工厂不同格式的箱单发票合并为一份',
-    status: '就绪', showLogs: false, logLines: [], params: {}, files: [],
+    disabled: true, disabledTip: '待开发',
+    status: '就绪', showLogs: false, resultOnly: true, logLines: [], params: {}, files: [],
   },
   {
     name: '账单录入佰信', icon: CreditCard, color: '#e74c3c',
     desc: '自动登录佰信系统，录入同行账单和代理账单',
-    status: '就绪', showLogs: false, logLines: [], params: {}, files: [],
+    status: '就绪', showLogs: false, resultOnly: true, logLines: [], params: {}, files: [],
   },
 ])
 
@@ -390,6 +444,10 @@ function onTelexFileDrop(e, task) {
 }
 
 async function runTask(task) {
+  if (task.disabled) {
+    task.status = '就绪'
+    return
+  }
   task.status = '运行中'
   task.showLogs = true
   task.logLines = []
@@ -421,13 +479,16 @@ async function runTask(task) {
         log(task, `[宁波港] 手机号: ${mobile.slice(0,3)}****${mobile.slice(-4)}`, '#87ceeb')
         localStorage.setItem('npedi_mobile', mobile)
 
-        const sessionResp = await fetch('/api/rpa/sms/session', { method: 'POST' })
+        const sessionResp = await fetch('/api/rpa/sms/session', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        })
         const { session_id: smsSessionId } = await sessionResp.json()
 
         log(task, '[宁波港] 正在启动浏览器...', '#87ceeb')
         const loginResp = await fetch('/api/rpa/run/stream', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({
             task_type: 'port_query',
             params: {
@@ -443,6 +504,16 @@ async function runTask(task) {
         })
 
         if (!loginResp.ok) {
+          // 401 = token 过期/失效：清本地登录态并引导重登（SSE 用原生 fetch，不走 client.js 拦截器）
+          if (loginResp.status === 401) {
+            localStorage.removeItem('oaiw_token')
+            localStorage.removeItem('oaiw_user')
+            log(task, '[错误] 登录已过期，请重新登录后再运行', '#ff6b6b')
+            ElMessage.error('登录已过期，请重新登录')
+            task.status = '就绪'
+            setTimeout(() => { window.location.href = '/login' }, 1000)
+            return
+          }
           const errBody = await loginResp.text().catch(() => '')
           log(task, `[错误] 后端请求失败 (HTTP ${loginResp.status}): ${errBody.slice(0, 200)}`, '#ff6b6b')
           task.status = '就绪'
@@ -476,11 +547,14 @@ async function runTask(task) {
                     if (result.data) {
                       result.data.split('\n').forEach(l => {
                         const c = l.replace(/\t/g, ' ').replace(/ +/g, ' ').trim()
-                        if (c) log(task, c)
+                        if (c) log(task, c, '', true)
                       })
                     }
-                    log(task, result.success ? '[查询成功]' : ('[查询失败] ' + (result.error || '')), result.success ? '#00ff00' : '#ff6b6b')
-                    if (result.success) task.queryDone = true
+                    log(task, result.success ? '[查询成功]' : ('[查询失败] ' + (result.error || '')), result.success ? '#00ff00' : '#ff6b6b', true)
+                    if (result.success) {
+                      task.queryDone = true
+                      sessionStorage.setItem('last_container_query', result.data || '')
+                    }
                   } catch (e) { /* ignore */ }
                   continue
                 }
@@ -503,7 +577,7 @@ async function runTask(task) {
                     log(task, '[宁波港] 已拿到验证码，正在进入系统...', '#00ff00')
                     await fetch('/api/rpa/sms/submit', {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                       body: JSON.stringify({ session_id: smsSessionId, code: smsCode }),
                     })
                   } catch {
@@ -517,7 +591,7 @@ async function runTask(task) {
         const ssePromise = readSSE()
         await ssePromise
         task.status = '就绪'
-        log(task, '--- 任务完成 ---', '#888')
+        log(task, '--- 任务完成 ---', '#888', true)
         return
       }
 
@@ -532,6 +606,16 @@ async function runTask(task) {
       })
 
       if (!resp.ok) {
+        // 401 = token 过期/失效：清本地登录态并引导重登
+        if (resp.status === 401) {
+          localStorage.removeItem('oaiw_token')
+          localStorage.removeItem('oaiw_user')
+          log(task, '[错误] 登录已过期，请重新登录后再运行', '#ff6b6b')
+          ElMessage.error('登录已过期，请重新登录')
+          task.status = '就绪'
+          setTimeout(() => { window.location.href = '/login' }, 1000)
+          return
+        }
         const errText = await resp.text().catch(() => '')
         log(task, `[错误] 后端请求失败 (HTTP ${resp.status}): ${errText.slice(0, 300)}`, '#ff6b6b')
         task.status = '就绪'
@@ -562,14 +646,15 @@ async function runTask(task) {
                 if (result.data) {
                   result.data.split('\n').forEach(l => {
                     const cleaned = l.replace(/\t/g, ' ').replace(/ +/g, ' ').trim()
-                    if (cleaned) log(task, cleaned)
+                    if (cleaned) log(task, cleaned, '', true)
                   })
                 }
                 if (result.success) {
                   task.queryDone = true
-                  log(task, '[查询成功]', '#00ff00')
+                  sessionStorage.setItem('last_container_query', result.data || '')
+                  log(task, '[查询成功]', '#00ff00', true)
                 }
-                else log(task, '[查询失败] ' + (result.error || '未知错误'), '#ff6b6b')
+                else log(task, '[查询失败] ' + (result.error || '未知错误'), '#ff6b6b', true)
               } catch (e) { log(task, data) }
             } else {
               if (data !== '[SSE connected]') {
@@ -584,8 +669,152 @@ async function runTask(task) {
       log(task, '正在执行: 码头状态查询', '#ffd700')
       const res = await client.post('/rpa/run', { task_type: 'port_status', params: task.params })
       if (res.data.success) {
-        log(task, '[执行成功]')
-        res.data.data.split('\n').forEach(line => log(task, line.trim()))
+        log(task, '[执行成功]', '', true)
+        res.data.data.split('\n').forEach(line => log(task, line.trim(), '', true))
+      } else { throw new Error(res.data.error || '执行失败') }
+    } else if (task.name === '船期查询') {
+      const vName = (task.params.vessel_name || '').trim().toUpperCase()
+      if (!vName) { log(task, '[请先输入船名]', '#ff6b6b'); task.status = '失败'; return }
+      const port = task.params.port_name || '盐田'
+
+      // ===== 宁波港：进箱公告查询（短信登录，复用集装箱卡宁波的交互）=====
+      if (port === '宁波') {
+        log(task, '[宁波港] 船期查询准备...', '#ffd700')
+
+        const savedMobile = localStorage.getItem('npedi_mobile') || ''
+        const mobile = (task.params.npedi_mobile || savedMobile).trim()
+        if (!mobile) {
+          log(task, '[宁波港] 请先输入手机号', '#ffd700')
+          task.status = '就绪'
+          return
+        }
+        log(task, `[宁波港] 手机号: ${mobile.slice(0,3)}****${mobile.slice(-4)}`, '#87ceeb')
+        localStorage.setItem('npedi_mobile', mobile)
+        log(task, `船名: ${vName}${task.params.voyage_no ? ` | 航次: ${task.params.voyage_no.trim()}` : ''}`, '#87ceeb')
+
+        const token = localStorage.getItem('oaiw_token')
+        const sessionResp = await fetch('/api/rpa/sms/session', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const { session_id: smsSessionId } = await sessionResp.json()
+
+        log(task, '[宁波港] 正在启动浏览器...', '#87ceeb')
+        const loginResp = await fetch('/api/rpa/run/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            task_type: 'vessel_schedule',
+            params: {
+              port_name: '宁波',
+              vessel_name: vName,
+              voyage_no: (task.params.voyage_no || '').trim(),
+              npedi_mobile: mobile,
+              sms_session_id: smsSessionId,
+            },
+          }),
+        })
+
+        if (!loginResp.ok) {
+          // 401 = token 过期/失效：清本地登录态并引导重登（SSE 用原生 fetch，不走 client.js 拦截器）
+          if (loginResp.status === 401) {
+            localStorage.removeItem('oaiw_token')
+            localStorage.removeItem('oaiw_user')
+            log(task, '[错误] 登录已过期，请重新登录后再运行', '#ff6b6b')
+            ElMessage.error('登录已过期，请重新登录')
+            task.status = '就绪'
+            setTimeout(() => { window.location.href = '/login' }, 1000)
+            return
+          }
+          const errBody = await loginResp.text().catch(() => '')
+          log(task, `[错误] 后端请求失败 (HTTP ${loginResp.status}): ${errBody.slice(0, 200)}`, '#ff6b6b')
+          task.status = '就绪'
+          return
+        }
+
+        let smsTaskResolved = false
+        const readSSE = async () => {
+          const reader = loginResp.body.getReader()
+          const decoder = new TextDecoder()
+          let buf = ''
+          let evtType = ''
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buf += decoder.decode(value, { stream: true })
+            const lines = buf.split('\n')
+            buf = lines.pop() || ''
+            for (const line of lines) {
+              if (line.startsWith('event: ')) {
+                evtType = line.slice(7).trim()
+              } else if (line.startsWith('data: ')) {
+                const msg = line.slice(6)
+                if (msg === '[SSE connected]') continue
+                if (evtType === 'done') {
+                  evtType = ''
+                  smsTaskResolved = true
+                  try {
+                    const result = JSON.parse(msg)
+                    if (result.data) {
+                      result.data.split('\n').forEach(l => {
+                        const c = l.replace(/\t/g, ' ').replace(/ +/g, ' ').trim()
+                        if (c) log(task, c, '', true)
+                      })
+                    }
+                    log(task, result.success ? '[查询成功]' : ('[查询失败] ' + (result.error || '')), result.success ? '#00ff00' : '#ff6b6b', true)
+                  } catch (e) { /* ignore */ }
+                  continue
+                }
+                log(task, msg)
+                if (!smsTaskResolved && (msg.includes('waiting for user input') || msg.includes('等待用户输入'))) {
+                  smsTaskResolved = true
+                  log(task, '[宁波港] 短信已发送到手机，请输入验证码', '#ffd700')
+                  await new Promise(r => setTimeout(r, 200))
+                  try {
+                    const { value: smsCode } = await ElMessageBox.prompt(
+                      '短信验证码已发送到您的手机，请输入：',
+                      '宁波港短信验证码',
+                      {
+                        confirmButtonText: '提交',
+                        cancelButtonText: '取消',
+                        inputPattern: /^\d{4,8}$/,
+                        inputErrorMessage: '请输入收到的短信验证码',
+                      }
+                    )
+                    log(task, '[宁波港] 已拿到验证码，正在进入系统...', '#00ff00')
+                    await fetch('/api/rpa/sms/submit', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({ session_id: smsSessionId, code: smsCode }),
+                    })
+                  } catch {
+                    log(task, '[宁波港] 用户取消验证码输入', '#ff6b6b')
+                  }
+                }
+              }
+            }
+          }
+        }
+        await readSSE()
+        task.status = '就绪'
+        log(task, '--- 任务完成 ---', '#888', true)
+        return
+      }
+
+      log(task, `[查询] ${port === '蛇口' ? '蛇口' : '盐田'}港船期`, '#ffd700')
+      log(task, `船名: ${vName}${task.params.voyage_no ? ` | 航次: ${task.params.voyage_no.trim()}` : ''}`, '#87ceeb')
+      const res = await client.post('/rpa/run', {
+        task_type: 'vessel_schedule',
+        params: {
+          port_name: port,
+          vessel_name: vName,
+          voyage_no: (task.params.voyage_no || '').trim(),
+          etb_time: (task.params.etb_time || '').trim(),
+        },
+      })
+      if (res.data.success) {
+        log(task, '[执行成功]', '', true)
+        res.data.data.split('\n').forEach(line => log(task, line.trim(), '', true))
       } else { throw new Error(res.data.error || '执行失败') }
     } else if (task.name === '电放保函生成') {
       if (task.autoMode) {
@@ -595,9 +824,9 @@ async function runTask(task) {
         formData.append('bill_of_lading', task.blFile)
         if (task.templateFile) formData.append('template', task.templateFile)
         if (task.carrierInput) formData.append('carrier', task.carrierInput)
-        const res = await client.post('/rpa/letter/auto-fill-telex', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+        const res = await client.post('/rpa/letter/auto-fill-telex', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 600000 })
         if (res.data.success) {
-          log(task, '[AI填写成功]', '#00ff00')
+          log(task, '[AI填写成功]', '#00ff00', true)
           task.filledLetter = res.data.filled_letter || ''
           task.extractedFields = res.data.extracted || {}
           task.downloadId = res.data.download_id || ''
@@ -620,8 +849,8 @@ async function runTask(task) {
         }
         const res = await client.post('/rpa/letter/generate', payload)
         if (res.data.success) {
-          log(task, '[保函生成成功]')
-          res.data.content.split('\n').forEach(line => log(task, line.trim()))
+          log(task, '[保函生成成功]', '', true)
+          res.data.content.split('\n').forEach(line => log(task, line.trim(), '', true))
         } else { throw new Error(res.data.error || '生成失败') }
       }
     } else if (task.name === '非危保函填写') {
@@ -634,9 +863,9 @@ async function runTask(task) {
         formData.append('certificate', task.certFile)
         if (task.templateFile) formData.append('template', task.templateFile)
         if (task.carrierInput) formData.append('carrier', task.carrierInput)
-        const res = await client.post('/rpa/letter/auto-fill', formData, { headers: { 'Content-Type': 'multipart/form-data' } })
+        const res = await client.post('/rpa/letter/auto-fill', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 600000 })
         if (res.data.success) {
-          log(task, '[AI填写成功]', '#00ff00')
+          log(task, '[AI填写成功]', '#00ff00', true)
           task.filledLetter = res.data.filled_letter || ''
           task.extractedFields = res.data.extracted || {}
           task.copied = false
@@ -657,8 +886,8 @@ async function runTask(task) {
         }
         const res = await client.post('/rpa/letter/generate', payload)
         if (res.data.success) {
-          log(task, '[保函生成成功]')
-          res.data.content.split('\n').forEach(line => log(task, line.trim()))
+          log(task, '[保函生成成功]', '', true)
+          res.data.content.split('\n').forEach(line => log(task, line.trim(), '', true))
         } else { throw new Error(res.data.error || '生成失败') }
       }
     } else if (task.name === '拼柜箱单合并') {
@@ -671,14 +900,14 @@ async function runTask(task) {
         if (uploadRes.data.success) { docIds.push(uploadRes.data.file_id); log(task, `已上传: ${uploadRes.data.filename}`, '#87ceeb') }
       }
       const mergeRes = await client.post('/docs/merge-invoices', { doc_ids: docIds })
-      if (mergeRes.data.success) { log(task, `[合并完成] 共 ${mergeRes.data.file_count} 个文件`, '#00ff00'); mergeRes.data.merged_text.split('\n').slice(0, 50).forEach(line => log(task, line)) }
+      if (mergeRes.data.success) { log(task, `[合并完成] 共 ${mergeRes.data.file_count} 个文件`, '#00ff00', true); mergeRes.data.merged_text.split('\n').slice(0, 50).forEach(line => log(task, line, '', true)) }
     } else if (task.name === '账单录入佰信') {
       log(task, '[打开佰信合并录入]', '#ffd700')
       router.push({ name: 'MergeFill' })
     }
 
     task.status = task.filledLetter ? '完成' : '就绪'
-    log(task, '--- 任务完成 ---', '#888')
+    log(task, '--- 任务完成 ---', '#888', true)
   } catch (e) {
     task.status = '失败'
     log(task, `[错误] ${e.response?.data?.error || e.message}`, '#ff6b6b')
@@ -710,13 +939,75 @@ function downloadLetter(task) {
   URL.revokeObjectURL(url)
 }
 
-function downloadDocx(task) {
+async function downloadDocx(task) {
+  // ⚠️ AI 填写的保函下载即用于打印盖章、对外生效 —— 盖章前强确认已人工核对
+  if (task.name === '电放保函生成' || task.name === '非危保函填写') {
+    try {
+      await ElMessageBox.confirm(
+        task.name === '电放保函生成'
+          ? 'AI 填写的字段已逐项与正本提单核对、确认无误？盖章后收货人将凭本保函电放提货，错填由贵司担责。'
+          : 'AI 填写的字段已逐项与 MSDS / 鉴定书核对、确认无误？按非危申报若与实际不符属瞒报，责任重大。',
+        '盖章前请确认',
+        { confirmButtonText: '确认无误，下载', cancelButtonText: '我再核对', type: 'warning' }
+      )
+    } catch { return }  // 用户点"我再核对"→ 不下载
+  }
+  // 下载端点要求 Authorization Bearer 头，window.open 会 401 → 用 fetch 带 token
   if (!task.downloadId) return
-  window.open(`/api/rpa/letter/download/${task.downloadId}`, '_blank')
+  const token = localStorage.getItem('oaiw_token') || ''
+  try {
+    const res = await fetch(`/api/rpa/letter/download/${task.downloadId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      ElMessage.error(`下载失败：${res.status}`)
+      return
+    }
+    const blob = await res.blob()
+    let filename = '保函.docx'
+    const cd = res.headers.get('Content-Disposition')
+    if (cd) {
+      const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i)
+      if (m) {
+        try { filename = decodeURIComponent(m[1]) } catch { filename = m[1] }
+      }
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error(`下载失败：${e.message || e}`)
+  }
 }
 </script>
 
 <style scoped>
+.ai-note {
+  background: #fdf6ec;
+  border: 1px solid #faecd8;
+  border-radius: 6px;
+  color: #b88230;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.ai-verify-warning {
+  background: #fef0f0;
+  border: 1px solid #fde2e2;
+  border-left: 4px solid #f56c6c;
+  border-radius: 4px;
+  color: #d5492e;
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
 .auto-fill-section {
   background: #f5f7fa;
   border-radius: 8px;
@@ -841,5 +1132,12 @@ function downloadDocx(task) {
 }
 .extracted-val {
   color: #303133;
+}
+/* 停用/待开发卡片：整体灰化 + 不可交互 */
+.rpa-card-off {
+  pointer-events: none;
+  cursor: not-allowed;
+  filter: grayscale(1) opacity(0.72);
+  user-select: none;
 }
 </style>

@@ -191,6 +191,24 @@ PORT_MAP = {
 }
 
 
+def _match_port(port_name: str) -> dict:
+    """PORT_MAP 查找：优先精确键，未命中时包含匹配。
+
+    上游 tools.py 的 LLM 参数枚举传 '盐田'/'蛇口'/'宁波'/'青岛'（无"港"后缀），
+    PORT_MAP 键为 '盐田港' 等，精确 get 会返回空 dict 导致全字段空。
+    与 _make_extractor 的包含判断（"青岛" in port_name）保持一致。
+    """
+    if not port_name:
+        return {}
+    direct = PORT_MAP.get(port_name)
+    if direct is not None:
+        return direct
+    for key, mapping in PORT_MAP.items():
+        if port_name in key or key in port_name:
+            return mapping
+    return {}
+
+
 # 规范字段全集（保证任何输入都输出稳定结构，未知港口时全部为空）
 CANONICAL_KEYS = [
     "container_no", "size_type", "seal", "gross", "booking_no", "bl_no",
@@ -350,7 +368,7 @@ def map_port_to_fields(port_name: str, raw_text: str,
     port_name = port_name or ""
     text = raw_text or ""
     get = _make_extractor(port_name, text)
-    mapping = PORT_MAP.get(port_name, {})
+    mapping = _match_port(port_name)
 
     canon = {k: "" for k in CANONICAL_KEYS}
     for ckey, entry in mapping.items():
