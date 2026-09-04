@@ -50,3 +50,19 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# --- 根目录调试/探针脚本与临时产物(不入库) ---
+/_*
+
+# --- 港口登录态备份(敏感 cookie/手机号) ---
+*_auth_state.json.bak*
+*_auth_state.json.bak_*
+
+# --- 内部业务文档/保函工作件/佰信部署件 ---
+/knowledge/
+/feiweibaohan/
+/dianfangbaohan/
+/scripts/
+/captcha_images/
+/start_baixin_agent.bat
+/frontend/public/*.zip
