@@ -49,7 +49,7 @@
         </span>
       </div>
 
-      <div class="chat-messages" ref="msgRef">
+      <div class="chat-messages" ref="msgRef" @click="onChatMessagesClick">
         <div v-for="(msg, i) in messages" :key="i" class="msg-row" :class="msg.role">
           <div class="msg-bubble-wrap" :class="msg.role">
             <div class="msg-name-bar">
@@ -70,7 +70,81 @@
                   <el-button size="small" @click="cancelEdit">取消</el-button>
                 </div>
               </div>
+
+              <!-- 随消息发送的文件附件 -->
+              <div v-if="msg.role === 'user' && msg.fileContexts && msg.fileContexts.length" class="msg-files">
+                <div v-for="fc in msg.fileContexts" :key="fc.file_id" class="file-context-tag" :title="fc.text_preview">
+                  <span class="file-icon">{{ getFileIcon(fc.ext) }}</span>
+                  <span class="file-name">{{ fc.filename }}</span>
+                  <span class="file-size">{{ formatFileSize(fc.file_size) }}</span>
+                </div>
+              </div>
             </div>
+
+            <!-- 佰信录入确认卡 -->
+            <div v-if="msg.baixinConfirm" class="baixin-confirm-card">
+              <div class="baixin-confirm-header">
+                <span class="baixin-confirm-title">📋 佰信录入确认</span>
+                <el-tag size="small" :type="msg.baixinConfirm.mode === 'air' ? 'warning' : 'primary'">
+                  {{ msg.baixinConfirm.mode === 'air' ? '空运' : '海运' }}
+                </el-tag>
+                <el-tag v-if="msg.baixinConfirm.order_no" size="small" type="info">{{ msg.baixinConfirm.order_no }}</el-tag>
+              </div>
+              <div v-if="msg.baixinConfirm.summary" class="baixin-confirm-summary">{{ msg.baixinConfirm.summary }}</div>
+              <div v-if="msg.baixinConfirm.merged && Object.keys(msg.baixinConfirm.merged).length" class="baixin-confirm-fields">
+                <div v-for="(val, key) in msg.baixinConfirm.merged" :key="key" class="baixin-confirm-field">
+                  <span class="bf-label">{{ fieldLabel(key) }}</span>
+                  <span class="bf-value">{{ val }}</span>
+                </div>
+              </div>
+              <div v-if="!msg.baixinStatus || msg.baixinStatus === 'idle'" class="baixin-confirm-actions">
+                <el-button type="primary" size="small" @click="runBaixinFromChat(i)">确认录入本机佰信</el-button>
+                <el-button size="small" @click="cancelBaixinConfirm(i)">取消</el-button>
+                <span class="bf-hint">⚠️ 不会自动保存，核对后再人工保存</span>
+              </div>
+              <div v-if="msg.baixinStatus === 'running'" class="baixin-log-box">
+                <div v-for="(l, li) in msg.baixinLogs" :key="li">{{ l }}</div>
+              </div>
+              <div v-if="msg.baixinStatus === 'done'" class="baixin-confirm-done">
+                ✅ 已执行完成。请在佰信弹窗<b>人工逐项核对</b>后再保存（业务/单证等【人名下拉】需人工选择）。
+              </div>
+              <div v-if="msg.baixinStatus === 'error'" class="baixin-confirm-error">
+                ❌ {{ msg.baixinLogs && msg.baixinLogs.length ? msg.baixinLogs[msg.baixinLogs.length - 1] : '录入失败' }}
+              </div>
+            </div>
+
+            <!-- 佰信费用录入确认卡 -->
+            <div v-if="msg.feeConfirm" class="baixin-confirm-card">
+              <div class="baixin-confirm-header">
+                <span class="baixin-confirm-title">📋 佰信费用录入确认</span>
+                <el-tag size="small" :type="msg.feeConfirm.mode === 'air' ? 'warning' : 'primary'">
+                  {{ msg.feeConfirm.mode === 'air' ? '空运' : '海运' }}
+                </el-tag>
+                <el-tag v-if="msg.feeConfirm.order_no" size="small" type="info">{{ msg.feeConfirm.order_no }}</el-tag>
+              </div>
+              <div v-if="msg.feeConfirm.summary" class="baixin-confirm-summary">{{ msg.feeConfirm.summary }}</div>
+              <div v-if="msg.feeConfirm.merged && Object.keys(msg.feeConfirm.merged).length" class="baixin-confirm-fields">
+                <div v-for="(val, key) in msg.feeConfirm.merged" :key="key" class="baixin-confirm-field">
+                  <span class="bf-label">{{ fieldLabel(key) }}</span>
+                  <span class="bf-value">{{ val }}</span>
+                </div>
+              </div>
+              <div v-if="!msg.baixinStatus || msg.baixinStatus === 'idle'" class="baixin-confirm-actions">
+                <el-button type="danger" size="small" @click="runBaixinFeeFromChat(i)">确认录入本机佰信</el-button>
+                <el-button size="small" @click="cancelBaixinConfirm(i)">取消</el-button>
+                <span class="bf-hint">⚠️ 不会自动保存，填完请人工核对</span>
+              </div>
+              <div v-if="msg.baixinStatus === 'running'" class="baixin-log-box">
+                <div v-for="(l, li) in msg.baixinLogs" :key="li">{{ l }}</div>
+              </div>
+              <div v-if="msg.baixinStatus === 'done'" class="baixin-confirm-done">
+                ✅ 已执行完成。请在佰信费用弹窗<b>人工核对</b>应收/应付内容后再保存。
+              </div>
+              <div v-if="msg.baixinStatus === 'error'" class="baixin-confirm-error">
+                ❌ {{ msg.baixinLogs && msg.baixinLogs.length ? msg.baixinLogs[msg.baixinLogs.length - 1] : '录入失败' }}
+              </div>
+            </div>
+
             <div v-if="editingMsgIndex !== i" class="msg-actions">
               <button class="msg-action-btn" @click="copyMsg(msg.content)" title="复制">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -213,6 +287,17 @@ const fileContexts = ref([])
 const fileInputRef = ref(null)
 const dragOver = ref(false)
 
+// 发送用文件上下文：当前附件栏优先；已随消息发出而清空时，自动复用最近一条 user 消息的文件快照
+// （覆盖「第1轮传模板、第3轮才说直接用word模版」的多轮场景，附件栏清空不影响 docx 生成）
+const effectiveFileContexts = computed(() => {
+  if (fileContexts.value.length) return fileContexts.value
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i]
+    if (m.role === 'user' && m.fileContexts && m.fileContexts.length) return m.fileContexts
+  }
+  return []
+})
+
 const currentAgentLabel = computed(() => {
   if (agentMode.value === 'auto') return '🤖 自动路由'
   if (agentMode.value === 'collaborate') return '🔥 一呼百应 (协作模式)'
@@ -284,7 +369,7 @@ async function uploadAndAddFiles(files) {
 
     try {
       const res = await axios.post('/api/chat/upload-context-file', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        headers: { 'Content-Type': 'multipart/form-data', Authorization: `Bearer ${localStorage.getItem('oaiw_token') || ''}` },
       })
       if (res.data.success) {
         fileContexts.value.push({
@@ -310,7 +395,7 @@ function removeFileContext(index) {
 }
 
 const tagColorMap = {
-  nim_minimax: 'success',
+  deepseek_chat: 'success',
   nim_gpt: 'primary',
   nim_qwen: 'warning',
   nim_deepseek: 'danger',
@@ -393,6 +478,48 @@ function renderMarkdown(text) {
     console.warn('[Markdown] Parse error:', e)
     return _esc(text)
   }
+}
+
+// 下载带鉴权的文件（fetch + Bearer 头，避免 <a>/window.open 触发 401）
+async function downloadWithToken(url) {
+  const token = localStorage.getItem('oaiw_token') || ''
+  try {
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      ElMessage.error(`下载失败：${res.status} ${res.statusText}`)
+      return
+    }
+    const blob = await res.blob()
+    let filename = '保函.docx'
+    const cd = res.headers.get('Content-Disposition')
+    if (cd) {
+      const m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)["']?/i)
+      if (m) {
+        try { filename = decodeURIComponent(m[1]) } catch { filename = m[1] }
+      }
+    }
+    const urlObj = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = urlObj
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(urlObj)
+  } catch (e) {
+    console.error('[downloadWithToken]', e)
+    ElMessage.error(`下载失败：${e.message || e}`)
+  }
+}
+
+// 事件委托：拦截消息里的保函下载链接，带 token 下载（不进浏览器新开页）
+function onChatMessagesClick(e) {
+  const link = e.target.closest('a[href^="/api/rpa/letter/download/"]')
+  if (!link) return
+  e.preventDefault()
+  downloadWithToken(link.getAttribute('href'))
 }
 
 function formatTime(t) {
@@ -637,7 +764,9 @@ async function sendMessage() {
   if (!activeConvId.value) await newChat()
   const isFirstMsg = messages.value.length === 0
 
-  messages.value.push({ role: 'user', content: userMsg })
+  messages.value.push({ role: 'user', content: userMsg, fileContexts: [...fileContexts.value] })
+  // 附件已随本条消息发出：清空输入框上方附件栏（后续轮次由 effectiveFileContexts 自动延续）
+  fileContexts.value = []
   await saveMsg('user', userMsg)
   if (isFirstMsg) await updateConvTitle(userMsg)
 
@@ -669,7 +798,7 @@ async function sendMessage() {
 /** 一呼百应 — 所有Agent协作分析，合成统一回复 */
 async function _handleCollaborate(userMsg) {
   const res = await client.post('/chat/multi-agent/collaborate', {
-    message: userMsg, history: [], file_contexts: fileContexts.value,
+    message: userMsg, history: [], file_contexts: effectiveFileContexts.value,
   })
   if (res.data.success) {
     const cr = res.data
@@ -698,7 +827,7 @@ async function _handleCollaborateStream(userMsg) {
       body: JSON.stringify({
         message: userMsg,
         history: _buildHistory(),
-        file_contexts: fileContexts.value,
+        file_contexts: effectiveFileContexts.value,
       }),
       signal: abortController.value.signal,
     })
@@ -808,7 +937,7 @@ async function _handleSingle(userMsg) {
         message: userMsg,
         history,
         agent_name: agentName,
-        file_contexts: fileContexts.value,
+        file_contexts: effectiveFileContexts.value,
       }),
       signal: abortController.value.signal,
     })
@@ -849,6 +978,19 @@ async function _handleSingle(userMsg) {
               } else if (data.phase === 'streaming') {
                 messages.value[msgIdx].content = ''
               }
+            } else if (evtType === 'tool_confirm') {
+              // 佰信填值/费用录入：kind=fee 挂费用确认卡，否则挂订舱确认卡
+              const args = data.args || {}
+              if (args.kind === 'fee') {
+                messages.value[msgIdx].feeConfirm = args
+              } else {
+                messages.value[msgIdx].baixinConfirm = args
+              }
+              messages.value[msgIdx].baixinStatus = 'idle'
+              messages.value[msgIdx].baixinLogs = []
+              messages.value[msgIdx].content = ''
+              thinking.value = false
+              scrollToBottom()
             } else if (evtType === 'done') {
               thinking.value = false; agentInfo = data
               messages.value[msgIdx].agentLabel = data.agent || 'AI助手'
@@ -886,6 +1028,135 @@ async function _handleSingle(userMsg) {
   } finally {
     abortController.value = null
     thinking.value = false
+  }
+}
+
+// ===== 佰信录入（确认卡） =====
+
+// 字段 key → 中文 label（展示用精简映射，未覆盖的直接显示 key）
+const BAIXIN_FIELD_LABELS = {
+  work_no: '工作号', issue_date: '开单日期', operator: '业务/操作', doc_cs: '单证/客服',
+  carrier: '航空公司', mawb_no: '主单号', hawb_no: '分单号', client_ref: '委托号',
+  consignor: '委托人', consignor_contact: '委托人-联系人', consignor_phone: '委托人-电话',
+  shipper: '发货人', shipper_contact: '发货人-联系人', shipper_phone: '发货人-电话',
+  consignee: '收货人', notify: '通知人', overseas_agent: '国外代理', air_agent: '空运代理',
+  flight1: '航班一', etd: 'ETD', eta: 'ETA', origin: '始发站', route: '航线', dest: '目的站',
+  solicit_type: '揽货类型', currency: '币别', price_per: '按约价', pieces: '件数',
+  package_unit: '包装', weight: '重量', charge_weight: '计重', volume: '体积',
+  charge_volume: '计体', cost: '成本', rate: '运价', pay_method: '付款方式',
+  main_hbl: '主/分单', coload: 'Co-Load', import_export: '进/出口', warehousing: '进仓',
+  normal_offload: '正常/退载', insurance: '保险', release: '放货', transship: '转运',
+  partial: '分批', cargo_desc: '物品描述', booking_remark: '订舱备注',
+  booking_confirm: '订舱确认', handover: '业务交接', so_no: 'S/O NO',
+  bl_no: '船东提单号', hbl_no: '1st H/BL', vessel_en: '英文船名', vessel_cn: '中文船名',
+  terminal: '航次', cutoff: '截行条', pol: '装运港', transit: '中转港',
+  dest_unload: '卸货港', gross: '毛重', cargo_name: '货物简称', size_type: '箱型箱重',
+  contract_no: '合约号', remark: '备注',
+  trader: '往来单位', recv_trader: '应收-往来单位', recv_amount: '应收',
+  recv_qty: '应收-数量', recv_price: '应收-单价',
+  pay_trader: '应付-往来单位', pay_amount: '应付',
+  pay_qty: '应付-数量', pay_price: '应付-单价',
+}
+function fieldLabel(key) {
+  return BAIXIN_FIELD_LABELS[key] || key
+}
+
+// 直连本机 agent 执行：health 检查 + POST /run + SSE 流式解析
+// payload 由调用方按模式构造（订舱 / 费用 run_mode=fee），msg 复用 baixinStatus/baixinLogs
+async function runAgentTask(msg, payload) {
+  msg.baixinStatus = 'running'
+  msg.baixinLogs = []
+  try {
+    // 1. 健康检查（本地 agent）
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 3000)
+    let healthy = false
+    try {
+      const h = await fetch('http://127.0.0.1:7878/health', { signal: ctrl.signal })
+      healthy = h.ok && (await h.json())?.ok
+    } catch { healthy = false }
+    clearTimeout(timer)
+    if (!healthy) throw new Error('未检测到本机佰信Agent，请先运行 D:\\OAIW\\start_baixin_agent.bat 启动')
+    msg.baixinLogs.push('[Agent 已连接，开始录入本机佰信...]')
+
+    // 2. 直连本地 agent 执行
+    const resp = await fetch('http://127.0.0.1:7878/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!resp.ok) throw new Error(`Agent 返回 HTTP ${resp.status}`)
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let evtType = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          evtType = line.slice(7).trim()
+        } else if (line.startsWith('data: ')) {
+          const data = line.slice(6)
+          if (evtType === 'done') {
+            evtType = ''
+            try {
+              const result = JSON.parse(data)
+              msg.baixinStatus = result.success ? 'done' : 'error'
+              msg.baixinLogs.push(result.message || (result.success ? '完成' : '失败'))
+            } catch { msg.baixinLogs.push(data) }
+          } else if (data !== '[SSE connected]') {
+            msg.baixinLogs.push(data)
+            scrollToBottom()
+          }
+        }
+      }
+    }
+    if (!msg.baixinStatus) msg.baixinStatus = 'done'
+  } catch (e) {
+    msg.baixinStatus = 'error'
+    msg.baixinLogs.push(`❌ ${e.message}`)
+  }
+  scrollToBottom()
+}
+
+async function runBaixinFromChat(idx) {
+  const msg = messages.value[idx]
+  const args = msg.baixinConfirm
+  if (!args) return
+  // 订舱：空运/海运由 order_no 前缀自动分流
+  await runAgentTask(msg, {
+    order_no: args.order_no || '',
+    container_no: args.container_no || '',
+    merged: args.merged || {},
+    provenance: { source: 'agent_chat', mode: args.mode },
+  })
+}
+
+async function runBaixinFeeFromChat(idx) {
+  const msg = messages.value[idx]
+  const args = msg.feeConfirm
+  if (!args) return
+  // 费用：run_mode=fee 走费用导航+填值链（应收/应付网格）
+  await runAgentTask(msg, {
+    run_mode: 'fee',
+    order_no: args.order_no || '',
+    container_no: '',
+    merged: args.merged || {},
+    provenance: { source: 'agent_chat_fee', mode: args.mode },
+  })
+}
+
+function cancelBaixinConfirm(idx) {
+  const msg = messages.value[idx]
+  if (msg) {
+    msg.baixinConfirm = null
+    msg.feeConfirm = null
+    if (!msg.content) msg.content = '（已取消佰信录入）'
   }
 }
 
@@ -1148,6 +1419,16 @@ function scrollToBottom() {
   padding: 8px 16px;
   max-height: 120px;
   overflow-y: auto;
+}
+.msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  max-width: 100%;
+}
+.msg-files .file-context-tag {
+  max-width: 200px;
 }
 .file-context-tags {
   display: flex;
@@ -1466,5 +1747,80 @@ function scrollToBottom() {
 .msg-actions :deep(.el-icon) {
   font-size: 14px;
   vertical-align: middle;
+}
+
+/* ── 佰信录入确认卡 ── */
+.baixin-confirm-card {
+  margin-top: 8px;
+  border: 1px solid #e6a23c;
+  border-radius: 8px;
+  background: #fdf6ec;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.baixin-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.baixin-confirm-title {
+  font-weight: 600;
+  color: #e6a23c;
+}
+.baixin-confirm-summary {
+  color: #606266;
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+.baixin-confirm-fields {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  background: #fff;
+  margin-bottom: 8px;
+}
+.baixin-confirm-field {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 10px;
+  border-bottom: 1px solid #f0f2f5;
+  font-size: 12px;
+}
+.baixin-confirm-field:last-child { border-bottom: none; }
+.bf-label { color: #909399; flex-shrink: 0; }
+.bf-value { color: #303133; font-weight: 500; text-align: right; word-break: break-all; }
+.baixin-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.bf-hint { font-size: 11px; color: #e6a23c; }
+.baixin-log-box {
+  margin-top: 8px;
+  background: #1d1e1f;
+  color: #00ff00;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-family: 'Courier New', monospace;
+  line-height: 1.6;
+}
+.baixin-confirm-done {
+  margin-top: 8px;
+  color: #67c23a;
+  line-height: 1.6;
+}
+.baixin-confirm-error {
+  margin-top: 8px;
+  color: #f56c6c;
+  line-height: 1.6;
 }
 </style>

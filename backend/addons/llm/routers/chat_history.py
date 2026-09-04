@@ -25,7 +25,7 @@ class ChatConversation(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     title = Column(String(200), default="新对话")
-    agent_mode = Column(String(50), default="auto")  # auto | nim_gpt | nim_qwen | nim_minimax | parallel
+    agent_mode = Column(String(50), default="auto")  # auto | nim_gpt | nim_qwen | deepseek_chat | parallel
     message_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

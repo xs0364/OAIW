@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.config import settings
 from backend.parser import extract_text
+from backend.core.services import get_current_user_required, require_admin
 from backend.addons.rag import (
     ingest_document,
     search_knowledge,
@@ -36,7 +37,7 @@ class SearchRequest(BaseModel):
 async def upload_knowledge(
     file: UploadFile = File(...),
     category: str = Form("general"),
-    authorization: Optional[str] = Header(None),
+    _auth_user=Depends(get_current_user_required),
 ):
     """上传文档到知识库：保存 → 解析 → 分块 → 向量化存储。"""
     ext = os.path.splitext(file.filename or "file")[1] or ".bin"
@@ -74,7 +75,7 @@ async def upload_knowledge(
 
 
 @router.post("/search")
-def search(req: SearchRequest):
+def search(req: SearchRequest, _auth_user=Depends(get_current_user_required)):
     """检索知识库。"""
     results = search_knowledge(req.query, top_k=req.top_k)
     context = "\n\n".join(
@@ -91,13 +92,13 @@ def search(req: SearchRequest):
 
 
 @router.delete("/{doc_id}")
-def delete(doc_id: str):
-    """从知识库删除文档。"""
+def delete(doc_id: str, _auth_user=Depends(require_admin)):
+    """从知识库删除文档（仅管理员）。"""
     deleted = delete_document(doc_id)
     return {"success": True, "deleted_chunks": deleted}
 
 
 @router.get("/stats")
-def stats():
+def stats(_auth_user=Depends(get_current_user_required)):
     """知识库统计。"""
     return {"success": True, **get_knowledge_stats()}

@@ -249,8 +249,93 @@ def _extract_xlsx(file_path: str) -> str:
     return "\n".join(lines)
 
 
+def _ocr_image_paddle(file_path: str) -> str:
+    """用 PaddleOCR-json 引擎识别整张图片（与 PDF 扫描件 _ocr_pdf_pages 同一引擎）。
+
+    该引擎中文识别率远优于 easyocr CPU 模式；paddleocr Python 包常未安装，
+    若 _extract_image 直接回退 easyocr 会得到中文乱码。返回识别文本，失败返回空串。
+    """
+    import os, sys, tempfile
+    _PADDLE_EXE = os.path.join(
+        "D:/Umi-OCR/Umi-OCR_Paddle_v2.1.5/UmiOCR-data/plugins",
+        "win7_x64_PaddleOCR-json/PaddleOCR-json.exe",
+    )
+    _PPOCR_API = os.path.join(
+        "D:/Umi-OCR/Umi-OCR_Paddle_v2.1.5/UmiOCR-data/plugins",
+        "win7_x64_PaddleOCR-json",
+    )
+    if not os.path.exists(_PADDLE_EXE):
+        return ""
+
+    # 低分辨率图先放大，提升小字识别率
+    tmp = file_path
+    try:
+        from PIL import Image
+        img = Image.open(file_path)
+        w, h = img.size
+        if w < 1600 or h < 1600:
+            scale = 2.0 if max(w, h) < 1200 else 1.5
+            img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        if img.size != (w, h):
+            fd, tmp = tempfile.mkstemp(suffix=".png")
+            os.close(fd)
+            img.save(tmp)
+    except Exception:
+        pass
+
+    try:
+        sys.path.insert(0, _PPOCR_API)
+        from PPOCR_api import PPOCR_pipe
+        ocr = PPOCR_pipe(_PADDLE_EXE)
+        try:
+            res = ocr.run(tmp)
+            if res.get("code") == 100:
+                # 每项带 box 四点坐标 → 附加 #y/列 前缀，与 rpa.py 的 PDF OCR 格式一致，
+                # 让下游 LLM 能借助坐标理解单据布局（否则纯行序会把表头误当字段值）。
+                rows = []
+                for b in (res.get("data") or []):
+                    text = (b.get("text") or "").strip()
+                    if not text:
+                        continue
+                    box = b.get("box")
+                    if not box or len(box) < 4:
+                        rows.append((0.0, 0.0, text))
+                        continue
+                    x0, y0 = box[0]
+                    x1, y1 = box[2]
+                    rows.append(((y0 + y1) / 2.0, (x0 + x1) / 2.0, text))
+                try:
+                    from PIL import Image as _Img
+                    w, _h = _Img.open(tmp).size
+                except Exception:
+                    w = 1000.0
+                # 同视觉行(容差10px)内按 x 从左到右 → 输出呈接近原单据的阅读顺序
+                out_lines = []
+                for yc, xc, text in sorted(rows, key=lambda r: (round(r[0] / 10), r[1])):
+                    col = "L" if xc < w * 0.4 else ("R" if xc > w * 0.62 else "C")
+                    out_lines.append(f"#y{int(yc)}/{col} {text}")
+                return "\n".join(out_lines)
+        finally:
+            try:
+                ocr.exit()
+            except Exception:
+                pass
+    except Exception:
+        return ""
+    finally:
+        if tmp != file_path and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+    return ""
+
+
 def _extract_image(file_path: str) -> str:
-    """图片 OCR 提取文字。"""
+    """图片 OCR 提取文字。优先 PaddleOCR-json 引擎（中文质量高），再回退 paddleocr/easyocr。"""
+    paddle_text = _ocr_image_paddle(file_path)
+    if paddle_text:
+        return paddle_text
     try:
         import paddleocr
         ocr = paddleocr.PaddleOCR(use_angle_cls=True, lang="ch", use_gpu=False, show_log=False)

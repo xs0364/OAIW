@@ -39,6 +39,9 @@ class AgentProfile:
 def simple_classify_intent(message: str) -> str:
     """简单的意图分类（同步版本，不依赖OAIWState）。"""
     msg = message.lower()
+    if any(k in msg for k in ["邮箱", "邮件", "发送到", "发到", "发邮件", "发送邮件", "发给", "email", "电邮"]):
+        # 发邮件是强指令，优先路由到启用工具调用的 Agent
+        return "send_email"
     if any(k in msg for k in ["码头", "开港", "进港", "放行", "装船", "港口状态"]):
         return "query_port"
     if any(k in msg for k in ["运价", "价格", "多少钱", "运费", "rate", "查价"]):
@@ -47,7 +50,7 @@ def simple_classify_intent(message: str) -> str:
         return "generate_letter"
     if any(k in msg for k in ["箱单", "发票", "合并", "拼柜"]):
         return "merge_docs"
-    if any(k in msg for k in ["账单", "佰信", "录入"]):
+    if any(k in msg for k in ["账单", "佰信", "录入", "应收", "应付", "费用录入", "登记"]):
         return "fill_bill"
     if any(k in msg for k in ["跟踪", "货物", "到哪", "航班", "状态", "查货"]):
         return "track_cargo"
@@ -58,10 +61,10 @@ def simple_classify_intent(message: str) -> str:
 AGENT_DEFAULTS = [
     AgentProfile(
         name="nim_gpt",
-        display_name="GPT-OSS 120B",
+        display_name="DeepSeek V4 Flash",
         api_key="",
-        model="openai/gpt-oss-120b",
-        description="通用推理，适合复杂业务逻辑分析、合同审核、决策建议",
+        model="deepseek-ai/deepseek-v4-flash-0731",
+        description="DeepSeek V4 Flash（NVIDIA NIM 托管），快速问答、翻译、业务分析",
     ),
     AgentProfile(
         name="nim_qwen",
@@ -72,8 +75,8 @@ AGENT_DEFAULTS = [
         description="综合能力强，多语言翻译好，适合文档处理、翻译、摘要",
     ),
     AgentProfile(
-        name="nim_minimax",
-        display_name="DeepSeek Chat",
+        name="deepseek_chat",
+        display_name="DeepSeek Agent",
         api_key="",
         model="deepseek-chat",
         api_url=DEEPSEEK_API_BASE,
@@ -160,7 +163,7 @@ class MultiAgentOrchestrator:
             "请从文档处理视角回答，确保信息准确、格式规范、语言通顺。\n"
             "如果涉及翻译或文档格式问题，请给出专业处理建议。"
         ),
-        "nim_minimax": (
+        "deepseek_chat": (
             "你是【DeepSeek 快速查询专家】。\n"
             "你的专长：快速查询港口状态、跟踪货物、获取实时数据、查阅操作信息。\n"
             "请从数据查询视角回答，只提供确凿的事实性信息。\n"
@@ -221,7 +224,7 @@ class MultiAgentOrchestrator:
                 "synthesized": "合成后的统一回复",
                 "synthesizer": "nim_deepseek",
                 "contributions": {
-                    "nim_minimax": { "agent": "MiniMax M3", "content": "...", "model": "..." },
+                    "deepseek_chat": { "agent": "DeepSeek Chat", "content": "...", "model": "..." },
                     "nim_gpt": { ... },
                     "nim_qwen": { ... },
                     "nim_deepseek": { ... },
@@ -269,8 +272,8 @@ class MultiAgentOrchestrator:
                 }
 
         # 4. 用最强Agent（Nemotron/DeepSeek）合成统一回复
-        #    按优先级选合成器: nim_deepseek > nim_gpt > nim_qwen > nim_minimax > 第一个可用
-        synthesizer_priority = ["nim_deepseek", "nim_gpt", "nim_qwen", "nim_minimax"]
+        #    按优先级选合成器: nim_deepseek > nim_gpt > nim_qwen > deepseek_chat > 第一个可用
+        synthesizer_priority = ["nim_deepseek", "nim_gpt", "nim_qwen", "deepseek_chat"]
         synthesizer_name = None
         for name in synthesizer_priority:
             if name in self.providers and contributions.get(name, {}).get("content", "").strip():
@@ -382,7 +385,7 @@ class MultiAgentOrchestrator:
         yield {"type": "status", "phase": "synthesizing"}
 
         # 6. 用最强Agent（Nemotron/DeepSeek）流式合成统一回复
-        synthesizer_priority = ["nim_deepseek", "nim_gpt", "nim_qwen", "nim_minimax"]
+        synthesizer_priority = ["nim_deepseek", "nim_gpt", "nim_qwen", "deepseek_chat"]
         synthesizer_name = None
         for name in synthesizer_priority:
             if name in self.providers and contributions.get(name, {}).get("content", "").strip():
@@ -544,11 +547,11 @@ class MultiAgentOrchestrator:
         # nim_deepseek: 深度推理/分析/运价/决策
         # nim_gpt: 合同审核/复杂文档/写信
         # nim_qwen: 中英双语/翻译/通用
-        # nim_minimax: 快速查询/港口状态
+        # deepseek_chat: 快速查询/港口状态
         intent_map = {
-            "query_port": "nim_minimax",
+            "query_port": "deepseek_chat",
             "query_rate": "nim_deepseek",
-            "track_cargo": "nim_minimax",
+            "track_cargo": "deepseek_chat",
             "generate_letter": "nim_gpt",
             "merge_docs": "nim_qwen",
             "fill_bill": "nim_gpt",

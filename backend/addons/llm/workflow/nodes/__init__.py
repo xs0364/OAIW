@@ -16,6 +16,11 @@ async def classify_intent(state: OAIWState) -> OAIWState:
     """Node 1: 意图识别 — 判断用户想做什么。"""
     msg = state.user_message.lower()
 
+    if any(k in msg for k in ["邮箱", "邮件", "发送到", "发到", "发邮件", "发送邮件", "发给", "email", "电邮"]):
+        # 发邮件是强指令，优先级最高 —— 必须走工具（tools 只在非 general 时传给 LLM）
+        state.intent = "send_email"
+        state.agent_route = "email"
+        return state
     if any(k in msg for k in ["码头", "开港", "进港", "放行", "装船", "港口状态"]):
         state.intent = "query_port"
         state.agent_route = "rpa_port"
@@ -59,6 +64,7 @@ async def build_prompt(state: OAIWState) -> OAIWState:
         "merge_docs": "用户需要合并箱单发票。请获取各工厂文件后合并为标准格式。",
         "fill_bill": "用户需要录入账单到佰信系统。请确认账单金额和业务单号。",
         "track_cargo": "用户想跟踪货物状态。使用 RPA 查询航班或船期信息。",
+        "send_email": "用户想通过邮件发送内容（如「发送到我的邮箱」）。使用 send_email_to_user 工具发送：收件人用户给到就填，说「我的邮箱/发给我」则 to_email 留空。未配置邮箱时工具会提示。",
         "general": "用户有一般性问题，直接回答。",
     }
 
@@ -130,14 +136,23 @@ def _fallback_reply(state: OAIWState, error: str = "") -> str:
 
 
 async def parse_reply(state: OAIWState) -> OAIWState:
-    """Node 4: 解析 LLM 回复，提取工具调用结果或最终回复。"""
+    """Node 4: 解析 LLM 回复，真正执行工具调用并记录结果。"""
     if state.tool_calls:
-        # 有工具调用 — 执行工具并记录结果
+        # 有工具调用 — 真实执行工具并拼接结果
+        from backend.addons.llm.tools import execute_tool_call
         results = []
         for tc in state.tool_calls:
             fn = tc["function"]
-            results.append(f"调用工具: {fn['name']}\n参数: {fn['arguments']}")
-        state.reply = state.llm_response + "\n\n" + "\n".join(results)
+            try:
+                result = await execute_tool_call(
+                    fn.get("name", ""),
+                    fn.get("arguments", "{}"),
+                    user_id=state.user_id,
+                )
+            except Exception as e:
+                result = f"❌ 工具执行失败: {e}"
+            results.append(result)
+        state.reply = (state.llm_response or "") + "\n\n" + "\n".join(results)
     else:
         state.reply = state.llm_response or "抱歉，我暂时无法处理这个问题。"
     return state

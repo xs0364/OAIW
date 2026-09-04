@@ -18,6 +18,7 @@ class OAIWState:
     history: list[dict] = field(default_factory=list)
     user_role: str = "operator"
     user_name: str = ""
+    user_id: Optional[int] = None       # 当前用户 id（工具按用户配置执行，如邮件）
     conversation_id: Optional[str] = None
 
     # === Agent 识别 ===
