@@ -38,6 +38,10 @@
           <el-icon><EditPen /></el-icon>
           <span>佰信合并录入</span>
         </el-menu-item>
+        <el-menu-item index="/container-standardize">
+          <el-icon><MagicStick /></el-icon>
+          <span>箱查询标准化</span>
+        </el-menu-item>
         <el-menu-item index="/agent-chat">
           <el-icon><ChatDotSquare /></el-icon>
           <span>AI助手</span>
@@ -49,6 +53,10 @@
         <el-menu-item index="/documents">
           <el-icon><FolderOpened /></el-icon>
           <span>文档管理</span>
+        </el-menu-item>
+        <el-menu-item index="/email-config">
+          <el-icon><Message /></el-icon>
+          <span>邮箱设置</span>
         </el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/users">
           <el-icon><UserFilled /></el-icon>
@@ -145,20 +153,34 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../store/auth'
 import { ElMessage } from 'element-plus'
 import {
   Odometer, TakeawayBox, Ship, Box, Monitor, EditPen,
   ChatDotSquare, Reading, FolderOpened, Setting, Fold, Expand,
-  UserFilled, ArrowDown, SwitchButton, Key, Message,
+  UserFilled, ArrowDown, SwitchButton, Key, Message, MagicStick,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const isCollapse = ref(false)
+
+// 心跳保活:页面打开期间每 60s 报一次活 → 后端自动刷新 last_active → 管理员可见在线
+let heartbeatTimer = null
+async function sendHeartbeat() {
+  try {
+    const { default: client } = await import('../api/client')
+    await client.post('/auth/heartbeat')
+  } catch { /* 401 由 axios 拦截器统一跳登录;其余静默 */ }
+}
+onMounted(() => {
+  sendHeartbeat() // 立即先报一次,不等 60s(登录后 ~0s 即在线)
+  heartbeatTimer = setInterval(sendHeartbeat, 60_000)
+})
+onBeforeUnmount(() => clearInterval(heartbeatTimer))
 
 // 通知设置
 const showNotify = ref(false)

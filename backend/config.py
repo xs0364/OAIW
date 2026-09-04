@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("OAIW_SECRET_KEY", "")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+    ONLINE_WINDOW_SECONDS: int = 180  # 在线判定:now - last_active ≤ 该值视为在线
 
     # LLM
     LLM_ENABLED: bool = True

@@ -3,7 +3,8 @@ import { ElMessage } from 'element-plus'
 
 const client = axios.create({
   baseURL: '/api',
-  timeout: 180000,
+  // AI 自动填写(电放保函/非危保函)整链路 PaddleOCR+LLM 实测 ~190s，180s 会被掐断 → 放宽到 300s
+  timeout: 300000,
 })
 
 // 请求拦截器：自动带 Token

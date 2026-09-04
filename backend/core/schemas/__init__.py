@@ -6,7 +6,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
+
+from backend.config import settings
 
 
 # ========== User Schemas ==========
@@ -32,6 +34,13 @@ class UserOut(BaseModel):
     is_active: int
     created_at: Optional[datetime] = None
     last_active: Optional[datetime] = None
+
+    @computed_field
+    @property
+    def online(self) -> bool:
+        """在线判定:now - last_active ≤ ONLINE_WINDOW_SECONDS;last_active 为空视为离线。"""
+        la = self.last_active
+        return bool(la) and (datetime.now() - la).total_seconds() <= settings.ONLINE_WINDOW_SECONDS
 
     model_config = {"from_attributes": True}
 

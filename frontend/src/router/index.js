@@ -49,6 +49,12 @@ const routes = [
         meta: { title: '佰信合并录入', icon: 'EditPen' },
       },
       {
+        path: 'container-standardize',
+        name: 'ContainerStandardize',
+        component: () => import('../views/ContainerStandardize.vue'),
+        meta: { title: '箱查询标准化', icon: 'MagicStick' },
+      },
+      {
         path: 'agent-chat',
         name: 'AgentChat',
         component: () => import('../views/AgentChat.vue'),
@@ -65,6 +71,12 @@ const routes = [
         name: 'Knowledge',
         component: () => import('../views/Knowledge.vue'),
         meta: { title: '知识库', icon: 'Reading' },
+      },
+      {
+        path: 'email-config',
+        name: 'EmailConfig',
+        component: () => import('../views/EmailConfig.vue'),
+        meta: { title: '邮箱设置', icon: 'Message' },
       },
       {
         path: 'settings',

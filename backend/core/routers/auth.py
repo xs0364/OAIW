@@ -3,6 +3,7 @@ OAIW 操作部AI工作台 — 认证路由
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -15,6 +16,7 @@ from backend.core.services import (
     authenticate_user,
     create_access_token,
     get_current_user,
+    get_current_user_required,
     hash_password,
 )
 
@@ -26,6 +28,8 @@ def login(data: UserLogin, db: Session = Depends(get_db)):
     user = authenticate_user(db, data.username, data.password)
     if not user:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
+    user.last_active = datetime.now()
+    db.commit()
     token = create_access_token({"sub": user.id, "role": user.role})
     return TokenOut(access_token=token, user=UserOut.model_validate(user))
 
@@ -66,6 +70,12 @@ def get_me(
     if not user:
         raise HTTPException(status_code=401, detail="登录已过期")
     return UserOut.model_validate(user)
+
+
+@router.post("/heartbeat")
+def heartbeat(user: User = Depends(get_current_user_required)):
+    """心跳保活:任意已登录用户调用,依赖内自动刷新 last_active。"""
+    return {"success": True}
 
 
 @router.post("/change-password")

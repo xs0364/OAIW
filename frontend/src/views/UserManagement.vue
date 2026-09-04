@@ -22,7 +22,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="is_active" label="状态" width="80" align="center">
+        <el-table-column prop="is_active" label="账号状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.is_active ? 'success' : 'danger'" size="small" effect="plain">
               {{ row.is_active ? '启用' : '禁用' }}
@@ -32,6 +32,13 @@
         <el-table-column prop="last_active" label="最后活跃" width="170">
           <template #default="{ row }">
             {{ row.last_active ? new Date(row.last_active).toLocaleString() : '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="online" label="在线" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.online ? 'success' : 'info'" size="small" effect="plain">
+              {{ row.online ? '在线' : '离线' }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="180" fixed="right">
@@ -113,7 +120,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import client from '../api/client'
@@ -122,6 +129,7 @@ const currentUserId = ref(0)
 const users = ref([])
 const loading = ref(false)
 const saving = ref(false)
+let refreshTimer = null
 
 // 创建
 const showCreate = ref(false)
@@ -136,15 +144,15 @@ const rules = {
 const showEdit = ref(false)
 const editForm = ref({ id: 0, username: '', password: '', display_name: '', email: '', role: 'operator', is_active: true })
 
-async function fetchUsers() {
-  loading.value = true
+async function fetchUsers(silent = false) {
+  if (!silent) loading.value = true
   try {
     const r = await client.get('/users')
     if (r.data.success) users.value = r.data.data
   } catch {
-    ElMessage.error('加载用户列表失败')
+    if (!silent) ElMessage.error('加载用户列表失败')
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -223,6 +231,10 @@ async function fetchMe() {
 onMounted(() => {
   fetchMe()
   fetchUsers()
+  refreshTimer = setInterval(() => fetchUsers(true), 30_000) // 页面打开期间每 30s 静默刷新,实时反映在线状态
+})
+onBeforeUnmount(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
 })
 </script>
 

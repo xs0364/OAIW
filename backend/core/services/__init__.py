@@ -59,6 +59,19 @@ def authenticate_user(db: Session, username: str, password: str) -> Optional[Use
     return user
 
 
+def get_current_user_required(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+) -> User:
+    """FastAPI 依赖：要求当前用户已登录（任意角色）。未登录 → 401。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="未登录")
+    user = get_current_user(authorization[7:], db)
+    if not user:
+        raise HTTPException(status_code=401, detail="登录已过期")
+    return user
+
+
 def require_admin(
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
