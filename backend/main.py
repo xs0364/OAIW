@@ -27,10 +27,13 @@ from backend.addons.llm.routers.chat_history import ChatConversation, ChatMessag
 from backend.core.routers.rpa import router as rpa_router
 from backend.core.routers.docs import router as docs_router
 from backend.core.routers.settings import router as settings_router
+from backend.core.routers.email_config import router as email_config_router
 from backend.core.routers.air_freight import router as air_freight_router
 from backend.core.routers.fcl import router as fcl_router
 from backend.core.routers.sea_freight import router as sea_freight_router
 from backend.core.routers.merge import router as merge_router
+from backend.core.routers.fee import router as fee_router
+from backend.core.routers.standardize import router as standardize_router
 from backend.core.models.setting import Setting  # noqa
 from backend.addons.rag.routers import router as knowledge_router
 
@@ -64,11 +67,14 @@ app.include_router(chat_history_router)
 app.include_router(rpa_router)
 app.include_router(docs_router)
 app.include_router(settings_router)
+app.include_router(email_config_router)
 app.include_router(knowledge_router)
 app.include_router(air_freight_router)
 app.include_router(fcl_router)
 app.include_router(sea_freight_router)
 app.include_router(merge_router)
+app.include_router(fee_router)
+app.include_router(standardize_router)
 
 
 @app.get("/api/health")

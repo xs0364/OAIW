@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.core.models.fcl_order import FCLOrder
+from backend.core.services import get_current_user_required
 
 router = APIRouter(prefix="/api/fcl", tags=["fcl"])
 
@@ -67,6 +68,7 @@ def _order_to_dict(o: FCLOrder) -> dict:
         "vesselName": o.vessel_name,
         "voyage": o.voyage,
         "blNo": o.bl_no,
+        "bookingNo": o.booking_no,
         "sealNo": o.seal_no,
         "terminal": o.terminal,
         "etd": o.etd,
@@ -82,7 +84,8 @@ def _order_to_dict(o: FCLOrder) -> dict:
 
 @router.get("/orders")
 def list_orders(search: str = "", status: str = "", container_type: str = "",
-                db: Session = Depends(get_db)):
+                db: Session = Depends(get_db),
+                _auth_user=Depends(get_current_user_required)):
     q = db.query(FCLOrder)
     if search:
         like = f"%{search}%"
@@ -101,7 +104,8 @@ def list_orders(search: str = "", status: str = "", container_type: str = "",
 
 
 @router.get("/orders/{order_id}")
-def get_order(order_id: int, db: Session = Depends(get_db)):
+def get_order(order_id: int, db: Session = Depends(get_db),
+              _auth_user=Depends(get_current_user_required)):
     order = db.query(FCLOrder).filter(FCLOrder.id == order_id).first()
     if not order:
         return {"success": False, "error": "订单不存在"}
@@ -109,7 +113,8 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/orders")
-def create_order(data: dict, db: Session = Depends(get_db)):
+def create_order(data: dict, db: Session = Depends(get_db),
+                 _auth_user=Depends(get_current_user_required)):
     import random
     order_no = data.get("orderNo") or f"FCL-{datetime.now().strftime('%y%m%d')}-{random.randint(100,999)}"
     order = FCLOrder(
@@ -127,6 +132,7 @@ def create_order(data: dict, db: Session = Depends(get_db)):
         vessel_name=data.get("vesselName", ""),
         voyage=data.get("voyage", ""),
         bl_no=data.get("blNo", ""),
+        booking_no=data.get("bookingNo", ""),
         seal_no=data.get("sealNo", ""),
         terminal=data.get("terminal", ""),
         etd=data.get("etd", ""),
@@ -143,7 +149,8 @@ def create_order(data: dict, db: Session = Depends(get_db)):
 
 
 @router.post("/orders/{order_id}/advance")
-def advance_order(order_id: int, data: dict = {}, db: Session = Depends(get_db)):
+def advance_order(order_id: int, data: dict = {}, db: Session = Depends(get_db),
+                  _auth_user=Depends(get_current_user_required)):
     """推进或更新到指定状态"""
     order = db.query(FCLOrder).filter(FCLOrder.id == order_id).first()
     if not order:
@@ -164,7 +171,7 @@ def advance_order(order_id: int, data: dict = {}, db: Session = Depends(get_db))
     _add_log(order, f"推进: {label}", note)
 
     # 同时更新可选字段
-    for field in ("container_no", "vessel", "vessel_name", "voyage", "bl_no", "etd", "eta", "gross_weight", "pieces", "volume", "carrier"):
+    for field in ("container_no", "vessel", "vessel_name", "voyage", "bl_no", "booking_no", "etd", "eta", "gross_weight", "pieces", "volume", "carrier"):
         if field in data:
             setattr(order, field, data[field])
 

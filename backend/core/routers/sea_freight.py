@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.core.models.fcl_order import SeaFreightOrder
+from backend.core.services import get_current_user_required
 
 router = APIRouter(prefix="/api/sea-freight", tags=["sea-freight"])
 
@@ -74,7 +75,8 @@ def _order_to_dict(o: SeaFreightOrder) -> dict:
 
 
 @router.get("/orders")
-def list_orders(search: str = "", status: str = "", db: Session = Depends(get_db)):
+def list_orders(search: str = "", status: str = "", db: Session = Depends(get_db),
+                _auth_user=Depends(get_current_user_required)):
     q = db.query(SeaFreightOrder)
     if search:
         like = f"%{search}%"
@@ -90,7 +92,8 @@ def list_orders(search: str = "", status: str = "", db: Session = Depends(get_db
 
 
 @router.get("/orders/{order_id}")
-def get_order(order_id: int, db: Session = Depends(get_db)):
+def get_order(order_id: int, db: Session = Depends(get_db),
+              _auth_user=Depends(get_current_user_required)):
     order = db.query(SeaFreightOrder).filter(SeaFreightOrder.id == order_id).first()
     if not order:
         return {"success": False, "error": "订单不存在"}
@@ -98,7 +101,8 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/orders")
-def create_order(data: dict, db: Session = Depends(get_db)):
+def create_order(data: dict, db: Session = Depends(get_db),
+                 _auth_user=Depends(get_current_user_required)):
     import random
     order_no = data.get("orderNo") or f"LCL-{datetime.now().strftime('%y%m%d')}-{random.randint(100,999)}"
     order = SeaFreightOrder(
@@ -126,7 +130,8 @@ def create_order(data: dict, db: Session = Depends(get_db)):
 
 
 @router.post("/orders/{order_id}/advance")
-def advance_order(order_id: int, data: dict = {}, db: Session = Depends(get_db)):
+def advance_order(order_id: int, data: dict = {}, db: Session = Depends(get_db),
+                  _auth_user=Depends(get_current_user_required)):
     order = db.query(SeaFreightOrder).filter(SeaFreightOrder.id == order_id).first()
     if not order:
         return {"success": False, "error": "订单不存在"}

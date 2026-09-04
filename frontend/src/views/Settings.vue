@@ -184,50 +184,6 @@
         </el-card>
       </el-tab-pane>
 
-      <!-- 邮箱配置 -->
-      <el-tab-pane label="邮箱配置" name="email">
-        <el-card shadow="never">
-          <template #header>
-            <div style="display: flex; justify-content: space-between; align-items: center">
-              <b>SMTP 邮件服务器</b>
-              <el-tag :type="smtpConfigured ? 'success' : 'danger'" size="small">
-                {{ smtpConfigured ? '已配置' : '未配置' }}
-              </el-tag>
-            </div>
-          </template>
-          <p style="color: #909399; font-size: 13px; margin-bottom: 20px">
-            配置 SMTP 邮件服务器后，系统可在 RPA 任务完成等场景自动发送通知邮件。
-            QQ邮箱使用 <code>smtp.qq.com</code>，密码处填写<strong>授权码</strong>（非登录密码）。
-          </p>
-          <el-form label-width="140px">
-            <el-form-item label="SMTP 服务器">
-              <el-input v-model="smtpHost" style="width: 300px" placeholder="smtp.qq.com" />
-            </el-form-item>
-            <el-form-item label="端口">
-              <el-radio-group v-model="smtpPort">
-                <el-radio :value="465">465 (SSL)</el-radio>
-                <el-radio :value="587">587 (TLS)</el-radio>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item label="邮箱账号">
-              <el-input v-model="smtpUser" style="width: 300px" placeholder="your@qq.com" />
-            </el-form-item>
-            <el-form-item label="密码/授权码">
-              <el-input v-model="smtpPassword" type="password" show-password style="width: 300px" placeholder="QQ邮箱请填写授权码" />
-            </el-form-item>
-            <el-form-item label="发件人地址">
-              <el-input v-model="smtpFromEmail" style="width: 300px" placeholder="留空则使用邮箱账号" />
-            </el-form-item>
-            <el-form-item label="测试收件人">
-              <el-input v-model="smtpTestTo" style="width: 300px" placeholder="留空则发送到自己邮箱" />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" @click="saveSmtpConfig" :loading="savingSmtp">保存配置</el-button>
-              <el-button @click="testSmtpConfig" :loading="testingSmtp" :disabled="!smtpConfigured">发送测试邮件</el-button>
-            </el-form-item>
-          </el-form>
-        </el-card>
-      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -254,7 +210,7 @@ const testingAgents = ref(false)
 const nimAgents = ref([
   { name: 'nim_gpt', display_name: 'GPT-OSS 120B', model: 'openai/gpt-oss-120b', api_url: 'https://integrate.api.nvidia.com/v1', api_key: '', showKey: false, status: false, desc: '通用推理，适合复杂业务逻辑分析、合同审核、决策建议' },
   { name: 'nim_qwen', display_name: 'Llama 3.1 70B', model: 'meta/llama-3.1-70b-instruct', api_url: 'https://integrate.api.nvidia.com/v1', api_key: '', showKey: false, status: false, desc: '综合能力强，多语言翻译好，适合文档处理、翻译、摘要生成' },
-  { name: 'nim_minimax', display_name: 'DeepSeek Chat', model: 'deepseek-chat', api_url: 'https://api.deepseek.com/v1', api_key: '', showKey: false, status: false, desc: 'DeepSeek官方API，适合快速问答、港口查询、货物跟踪' },
+  { name: 'deepseek_chat', display_name: 'DeepSeek Agent', model: 'deepseek-chat', api_url: 'https://api.deepseek.com/v1', api_key: '', showKey: false, status: false, desc: 'DeepSeek官方API，适合快速问答、港口查询、货物跟踪' },
   { name: 'nim_deepseek', display_name: 'Nemotron Super 120B', model: 'nvidia/nemotron-3-super-120b-a12b', api_url: 'https://integrate.api.nvidia.com/v1', api_key: '', showKey: false, status: false, desc: '英伟达顶级推理模型，适合复杂分析、运价趋势、利润预测、业务决策' },
 ])
 
@@ -264,17 +220,6 @@ const customAgents = ref([])
 const newCustomAgent = ref({
   name: '', display_name: '', model: '', api_url: 'https://integrate.api.nvidia.com/v1', api_key: '', desc: '',
 })
-
-// SMTP 邮箱配置
-const smtpHost = ref('')
-const smtpPort = ref(465)
-const smtpUser = ref('')
-const smtpPassword = ref('')
-const smtpFromEmail = ref('')
-const smtpTestTo = ref('')
-const savingSmtp = ref(false)
-const testingSmtp = ref(false)
-const smtpConfigured = ref(false)
 
 function addCustomAgent() {
   const a = newCustomAgent.value
@@ -322,18 +267,10 @@ onMounted(async () => {
       loadSetting('rpa_headless', headless),
       loadSetting('rpa_timeout', rpaTimeout),
       loadSetting('baixin_url', baixinUrl),
-      // SMTP配置
-      loadSetting('smtp_host', smtpHost),
-      loadSetting('smtp_port', smtpPort),
-      loadSetting('smtp_user', smtpUser),
-      loadSetting('smtp_password', smtpPassword),
-      loadSetting('smtp_from_email', smtpFromEmail),
     ])
     // 修复类型
     headless.value = headless.value === 'true' || headless.value === true
     rpaTimeout.value = parseInt(String(rpaTimeout.value)) || 30
-    smtpPort.value = parseInt(String(smtpPort.value)) || 465
-    smtpConfigured.value = !!(smtpHost.value && smtpUser.value && smtpPassword.value)
 
     // 读取Agent Key和URL
     for (const agent of nimAgents.value) {
@@ -473,46 +410,5 @@ async function saveRPAConfig() {
   }
 }
 
-// ===== SMTP 邮箱配置 =====
-
-async function saveSmtpConfig() {
-  savingSmtp.value = true
-  try {
-    await client.post('/settings/set-multi', [
-      { key: 'smtp_host', value: smtpHost.value, description: 'SMTP服务器地址' },
-      { key: 'smtp_port', value: String(smtpPort.value), description: 'SMTP端口' },
-      { key: 'smtp_user', value: smtpUser.value, description: 'SMTP用户名' },
-      { key: 'smtp_password', value: smtpPassword.value, description: 'SMTP密码/授权码' },
-      { key: 'smtp_from_email', value: smtpFromEmail.value, description: '发件人邮箱' },
-    ])
-    smtpConfigured.value = !!(smtpHost.value && smtpUser.value && smtpPassword.value)
-    ElMessage.success('SMTP配置已保存')
-  } catch (e) {
-    ElMessage.error('保存失败: ' + (e.response?.data?.error || e.message))
-  }
-  savingSmtp.value = false
-}
-
-async function testSmtpConfig() {
-  testingSmtp.value = true
-  try {
-    const res = await client.post('/settings/test-email', {
-      to_email: smtpTestTo.value || smtpUser.value,
-      host: smtpHost.value,
-      port: smtpPort.value,
-      user: smtpUser.value,
-      password: smtpPassword.value,
-      from_email: smtpFromEmail.value,
-    })
-    if (res.data.success) {
-      ElMessage.success(res.data.message)
-    } else {
-      ElMessage.error(res.data.error || '发送失败')
-    }
-  } catch (e) {
-    ElMessage.error('测试失败: ' + (e.response?.data?.error || e.message))
-  }
-  testingSmtp.value = false
-}
 </script>
 

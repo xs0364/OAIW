@@ -28,6 +28,7 @@ class FCLOrder(Base):
     vessel_name = Column(String(50), default="", comment="英文船名")
     voyage = Column(String(30), default="", comment="航次")
     bl_no = Column(String(50), default="", comment="提单号")
+    booking_no = Column(String(50), default="", comment="订舱号/SO号（船司订舱号）")
     seal_no = Column(String(50), default="", comment="铅封号")
     terminal = Column(String(50), default="", comment="码头")
     etd = Column(String(20), default="", comment="预计开船/离港时间")

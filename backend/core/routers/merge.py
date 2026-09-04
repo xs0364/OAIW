@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from backend.config import settings
 from backend.database import get_db
-from backend.core.services import get_current_user
+from backend.core.services import get_current_user_required
 from backend.core.models.fcl_order import FCLOrder
 from backend.rpa.file_extract import extract_fields_from_file
 from backend.rpa import merge_service
@@ -45,15 +45,10 @@ async def preview(
     order_no: str = Form(""),
     files: list[UploadFile] = File([]),
     doc_ids: str = Form(""),
-    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
+    _auth_user=Depends(get_current_user_required),
 ):
     """上传文件(或复用Documents) + 柜号 → 合并预览。"""
-    if authorization:
-        user = get_current_user(authorization.replace("Bearer ", ""), db)
-        if not user:
-            return {"success": False, "error": "未登录"}
-
     ctn = container_no.strip().upper()
     warnings = []
 
@@ -132,15 +127,10 @@ class ConfirmBody(BaseModel):
 @router.post("/confirm")
 async def confirm(
     body: ConfirmBody,
-    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
+    _auth_user=Depends(get_current_user_required),
 ):
     """确认合并：同步 FCLOrder + 写佰信填值 JSON。"""
-    if authorization:
-        user = get_current_user(authorization.replace("Bearer ", ""), db)
-        if not user:
-            return {"success": False, "error": "未登录"}
-
     ctn = body.container_no.strip().upper()
     order = merge_service.sync_fcl_order(db, body.merged, ctn, body.booking_no)
     output_path = merge_service.write_merge_output(

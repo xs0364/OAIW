@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.core.models.air_freight import AirFreightOrder
+from backend.core.services import get_current_user_required
 
 router = APIRouter(prefix="/api/air-freight", tags=["air-freight"])
 
@@ -48,7 +49,8 @@ def _add_log(order: AirFreightOrder, action: str, detail: str = ""):
 
 
 @router.get("/orders")
-def list_orders(search: str = "", status: str = "", db: Session = Depends(get_db)):
+def list_orders(search: str = "", status: str = "", db: Session = Depends(get_db),
+                _auth_user=Depends(get_current_user_required)):
     q = db.query(AirFreightOrder)
     if search:
         q = q.filter(AirFreightOrder.order_no.like(f"%{search}%"))
@@ -83,7 +85,8 @@ def list_orders(search: str = "", status: str = "", db: Session = Depends(get_db
 
 
 @router.post("/orders")
-def create_order(data: dict, db: Session = Depends(get_db)):
+def create_order(data: dict, db: Session = Depends(get_db),
+                 _auth_user=Depends(get_current_user_required)):
     import random
     order_no = data.get("orderNo") or f"AE-{datetime.now().strftime('%y%m%d')}-{random.randint(100,999)}"
     order = AirFreightOrder(
@@ -109,7 +112,8 @@ def create_order(data: dict, db: Session = Depends(get_db)):
 
 
 @router.get("/orders/{order_id}")
-def get_order(order_id: int, db: Session = Depends(get_db)):
+def get_order(order_id: int, db: Session = Depends(get_db),
+              _auth_user=Depends(get_current_user_required)):
     order = db.query(AirFreightOrder).filter(AirFreightOrder.id == order_id).first()
     if not order:
         return {"success": False, "error": "订单不存在"}
@@ -136,7 +140,8 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/orders/{order_id}/advance")
-def advance_order(order_id: int, db: Session = Depends(get_db)):
+def advance_order(order_id: int, db: Session = Depends(get_db),
+                  _auth_user=Depends(get_current_user_required)):
     order = db.query(AirFreightOrder).filter(AirFreightOrder.id == order_id).first()
     if not order:
         return {"success": False, "error": "订单不存在"}
@@ -157,7 +162,8 @@ def advance_order(order_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/orders/{order_id}")
-def delete_order(order_id: int, db: Session = Depends(get_db)):
+def delete_order(order_id: int, db: Session = Depends(get_db),
+                 _auth_user=Depends(get_current_user_required)):
     order = db.query(AirFreightOrder).filter(AirFreightOrder.id == order_id).first()
     if not order:
         return {"success": False, "error": "订单不存在"}

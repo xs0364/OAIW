@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.config import settings
-from backend.core.services import get_current_user
+from backend.core.services import get_current_user_required, require_admin
 from backend.parser import extract_text
 
 router = APIRouter(prefix="/api/docs", tags=["docs"])
@@ -25,14 +25,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
+    _auth_user=Depends(get_current_user_required),
 ):
     """上传文档并自动提取内容。"""
-    if authorization:
-        user = get_current_user(authorization.replace("Bearer ", ""), db)
-        if not user:
-            return {"success": False, "error": "未登录"}
 
     # 保存文件
     ext = os.path.splitext(file.filename or "file")[1] or ".bin"
@@ -60,7 +56,7 @@ async def upload_document(
 @router.post("/merge-invoices")
 async def merge_invoices(
     doc_ids: list[str] = Form(...),
-    authorization: Optional[str] = Header(None),
+    _auth_user=Depends(get_current_user_required),
 ):
     """合并多份箱单发票。"""
     texts = []
@@ -80,7 +76,7 @@ async def merge_invoices(
 
 
 @router.get("/files")
-async def list_docs():
+async def list_docs(_auth_user=Depends(get_current_user_required)):
     """列出所有已上传文档。"""
     if not os.path.isdir(UPLOAD_DIR):
         return {"success": True, "files": []}
@@ -100,7 +96,7 @@ async def list_docs():
 
 
 @router.get("/files/{file_id}")
-async def get_doc(file_id: str):
+async def get_doc(file_id: str, _auth_user=Depends(get_current_user_required)):
     """获取文档详情和文本预览。"""
     for fname in os.listdir(UPLOAD_DIR):
         if fname.startswith(file_id):
@@ -118,8 +114,8 @@ async def get_doc(file_id: str):
 
 
 @router.delete("/files/{file_id}")
-async def delete_doc(file_id: str):
-    """删除文档。"""
+async def delete_doc(file_id: str, _auth_user=Depends(require_admin)):
+    """删除文档（仅管理员）。"""
     for fname in os.listdir(UPLOAD_DIR):
         if fname.startswith(file_id):
             path = os.path.join(UPLOAD_DIR, fname)

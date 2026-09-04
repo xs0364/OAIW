@@ -69,6 +69,32 @@ class SmtpConfig:
         except Exception:
             return cls()
 
+    @classmethod
+    def from_user(cls, db, user_id: int) -> "SmtpConfig":
+        """从 user_smtp_config 表读取指定用户的 SMTP 配置。
+
+        未配置返回空配置（is_configured=False），调用方负责提示"未配置邮箱"。
+        """
+        try:
+            from backend.core.models.user_smtp_config import UserSmtpConfig
+
+            row = (
+                db.query(UserSmtpConfig)
+                .filter(UserSmtpConfig.user_id == user_id)
+                .first()
+            )
+            if row is None:
+                return cls()
+            return cls(
+                host=row.smtp_host or "",
+                port=row.smtp_port or 465,
+                user=row.smtp_user or "",
+                password=row.smtp_password or "",
+                from_email=row.smtp_from_email or "",
+            )
+        except Exception:
+            return cls()
+
     def to_dict(self) -> dict:
         """返回配置字典（隐藏密码）。"""
         return {
@@ -362,3 +388,68 @@ def send_notification_async(
         target=lambda: send_notification_email(to_email, subject, content_text, content_html, task_name),
         daemon=True,
     ).start()
+
+
+# =============================================================================
+# 按用户配置发送（各账号各自的 SMTP）
+# =============================================================================
+
+# 未配置邮箱时的统一提示文案
+UNCONFIGURED_MSG = "您尚未配置邮箱，请先到左侧菜单【邮箱设置】中配置 SMTP 邮箱后再发送邮件。"
+
+
+def send_email_to_user(
+    db,
+    user_id: int,
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: Optional[str] = None,
+) -> tuple[bool, str]:
+    """用指定用户的 SMTP 配置发送邮件。
+
+    用户未配置邮箱时返回 (False, UNCONFIGURED_MSG)，不自动回退全局配置。
+    """
+    config = SmtpConfig.from_user(db, user_id)
+    if not config.is_configured:
+        return False, UNCONFIGURED_MSG
+    return send_email(to_email, subject, html_body, text_body, config=config)
+
+
+def send_notification_email_to_user(
+    db,
+    user_id: int,
+    to_email: str,
+    subject: str,
+    content_text: str,
+    content_html: Optional[str] = None,
+    task_name: str = "",
+) -> tuple[bool, str]:
+    """用指定用户的 SMTP 配置发送模板通知邮件。"""
+    config = SmtpConfig.from_user(db, user_id)
+    if not config.is_configured:
+        return False, UNCONFIGURED_MSG
+    prefix = f"[OAIW 工作台] "
+    full_subject = f"{prefix}{subject}"
+    if not content_html:
+        import html as htmlmod
+        escaped = htmlmod.escape(content_text)
+        content_html = f"<pre style='font-size:13px;line-height:1.6'>{escaped}</pre>"
+    html_body = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"></head>
+<body style="font-family: 'Microsoft YaHei', Arial, sans-serif; margin: 0; padding: 0; background: #f5f5f5;">
+<div style="max-width: 680px; margin: 20px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); overflow: hidden;">
+<div style="background: linear-gradient(135deg, #409eff, #337ecc); padding: 24px 32px;">
+<h1 style="color: #fff; font-size: 18px; margin: 0; font-weight: 500;">{'&#9881; ' + task_name if task_name else ''} OAIW 自动化通知</h1>
+</div>
+<div style="padding: 32px; color: #303133; font-size: 14px; line-height: 1.8;">
+{content_html}
+</div>
+<div style="padding: 16px 32px; border-top: 1px solid #ebeef5; font-size: 12px; color: #c0c4cc; text-align: center;">
+OAIW 操作部 AI 工作台 &mdash; 系统自动发送，请勿回复
+</div>
+</div>
+</body>
+</html>"""
+    return send_email(to_email, full_subject, html_body, content_text, config=config)

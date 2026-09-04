@@ -10,8 +10,10 @@ from sqlalchemy import Column, DateTime, Integer, String, Text
 
 from backend.database import Base
 from backend.core.models.setting import Setting  # noqa — 注册 Setting 模型
+from backend.core.models.user_smtp_config import UserSmtpConfig  # noqa — 注册用户SMTP配置模型
 from backend.core.models.air_freight import AirFreightOrder  # noqa — 注册空运订单模型
 from backend.core.models.fcl_order import FCLOrder, SeaFreightOrder  # noqa — 注册海运订单模型
+from backend.core.models.container_standardize import ContainerStandardize  # noqa — 注册集装箱标准化记录模型
 
 
 class User(Base):

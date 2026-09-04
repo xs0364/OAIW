@@ -213,7 +213,9 @@ async function fetchOrders() {
     if (statusFilter.value) params.set('status', statusFilter.value)
     if (containerFilter.value) params.set('container_type', containerFilter.value)
     const qs = params.toString()
-    const res = await fetch(`/api/fcl/orders${qs ? '?' + qs : ''}`)
+    const res = await fetch(`/api/fcl/orders${qs ? '?' + qs : ''}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('oaiw_token') || ''}` },
+    })
     const data = await res.json()
     if (data.success) {
       orders.value = data.orders.map(mapOrder)
@@ -341,7 +343,7 @@ function createOrder() {
   }
   fetch('/api/fcl/orders', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('oaiw_token') || ''}` },
     body: JSON.stringify(body),
   }).then(r => r.json()).then(data => {
     if (data.success) {
@@ -388,7 +390,7 @@ function confirmAdvance() {
   // 调后端API推进
   fetch(`/api/fcl/orders/${row.id}/advance`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('oaiw_token') || ''}` },
     body: JSON.stringify({ status: advanceTarget.value, note: advanceNote.value || '' }),
   }).then(r => r.json()).then(data => {
     if (data.success) {
